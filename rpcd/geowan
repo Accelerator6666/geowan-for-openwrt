@@ -1,0 +1,49 @@
+#!/usr/bin/python3
+"""rpcd executable plugin exposing read-only GeoWAN APIs."""
+import json
+import sys
+from pathlib import Path
+
+installed = Path("/usr/libexec/geowan-console")
+repository_agent = Path(__file__).resolve().parents[1] / "agent"
+
+# Prefer the complete source checkout during preflight and tests; use the
+# installed modules for the live rpcd runtime.
+if (repository_agent / "geowan_rpc.py").is_file() and \
+   (repository_agent / "geowan_geoip.py").is_file():
+    module_dir = repository_agent
+elif (installed / "geowan_rpc.py").is_file() and \
+     (installed / "geowan_geoip.py").is_file():
+    module_dir = installed
+else:
+    raise SystemExit("GeoWAN RPC modules not found")
+
+sys.path.insert(0, str(module_dir))
+from geowan_rpc import dispatch
+
+METHODS = {
+    "lookup": {"ip": ""},
+    "list_bans": {
+        "page": 1, "page_size": 50, "query": "", "family": 0,
+        "country_code": "", "asn": 0, "port": 0, "proto": "",
+        "sort": "last_seen"
+    },
+    "get_ban": {"ip": ""},
+    "analytics": {"period": "24h"}
+}
+
+if len(sys.argv) < 2:
+    raise SystemExit(2)
+
+if sys.argv[1] == "list":
+    print(json.dumps(METHODS))
+elif sys.argv[1] == "call" and len(sys.argv) >= 3:
+    try:
+        request = json.load(sys.stdin)
+        response = dispatch(sys.argv[2], request)
+        print(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        print(json.dumps({"error": "request_failed"}))
+        raise SystemExit(1)
+else:
+    raise SystemExit(2)

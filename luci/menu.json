@@ -1,0 +1,15 @@
+{
+  "admin/services/geowan-console": {
+    "title": "GeoWAN 安全面板",
+    "order": 75,
+    "action": {
+      "type": "view",
+      "path": "geowan/overview"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-geowan-console"
+      ]
+    }
+  }
+}
