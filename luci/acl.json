@@ -1,6 +1,6 @@
 {
   "luci-app-geowan-console": {
-    "description": "Read GeoWAN dashboard data, perform IP geolocation lookup and sampled analytics, and query blacklist records",
+    "description": "Read GeoWAN dashboard data, perform IP geolocation lookup, sampled analytics and read-only source profiling",
     "read": {
       "ubus": {
         "file": [
@@ -10,7 +10,10 @@
           "lookup",
           "list_bans",
           "get_ban",
-          "analytics"
+          "analytics",
+          "source_profile",
+          "asn_profile",
+          "correlations"
         ]
       },
       "file": {

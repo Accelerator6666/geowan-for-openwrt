@@ -27,6 +27,18 @@ var getAnalytics = rpc.declare({
     object: 'geowan', method: 'analytics', params: [ 'period' ]
 });
 
+var getSourceProfile = rpc.declare({
+    object: 'geowan', method: 'source_profile', params: [ 'ip', 'period' ]
+});
+
+var getAsnProfile = rpc.declare({
+    object: 'geowan', method: 'asn_profile', params: [ 'asn', 'period' ]
+});
+
+var getCorrelations = rpc.declare({
+    object: 'geowan', method: 'correlations', params: [ 'period' ]
+});
+
 function timeString(epoch) {
     return epoch ? new Date(epoch * 1000).toLocaleString() : '—';
 }
@@ -585,7 +597,242 @@ function analyticsPanel() {
     return root;
 }
 
-function draw(d, lookupNode, blacklistNode, analyticsNode) {
+
+function profilePanel() {
+    var ipInput = E('input', {
+        'type': 'text', 'class': 'cbi-input-text',
+        'placeholder': '公网来源 IP，例如 8.8.8.8',
+        'autocomplete': 'off', 'spellcheck': 'false'
+    });
+    var asnInput = E('input', {
+        'type': 'number', 'class': 'cbi-input-text',
+        'placeholder': 'ASN，例如 15169', 'min': '1', 'max': '4294967295'
+    });
+    var period = E('select', { 'class': 'cbi-input-select' }, [
+        E('option', { 'value': '1h' }, '最近 1 小时'),
+        E('option', { 'value': '24h' }, '最近 24 小时'),
+        E('option', { 'value': '7d' }, '最近 7 天'),
+        E('option', { 'value': '30d' }, '最近 30 天')
+    ]);
+    period.value = '24h';
+
+    var sourceButton = E('button', {
+        'type': 'button', 'class': 'cbi-button cbi-button-action'
+    }, '查询来源画像');
+    var asnButton = E('button', {
+        'type': 'button', 'class': 'cbi-button cbi-button-action'
+    }, '查询 ASN 画像');
+    var correlationButton = E('button', {
+        'type': 'button', 'class': 'cbi-button'
+    }, '刷新关联线索');
+    var sourceResult = E('div', { 'class': 'gw-profile-result' },
+        '输入公网来源 IP，查询本机已采集到的行为样本。');
+    var asnResult = E('div', { 'class': 'gw-profile-result' },
+        '输入 ASN，查看该网络组织在本机日志样本中的活动分布。');
+    var correlationResult = E('div', { 'class': 'gw-profile-result' },
+        '查找相近时间命中相同目标服务的多个来源 IP。');
+    var state = { sourceBusy: false, asnBusy: false, correlationBusy: false };
+
+    function errorText(data) {
+        var labels = {
+            invalid_ip: 'IP 地址格式不正确',
+            non_global_ip: '只支持公网 IP；私有、保留和本地地址不进行画像',
+            invalid_asn: 'ASN 必须是 1 至 4294967295 的整数',
+            invalid_period: '统计范围无效',
+            database_unavailable: '本地遥测数据库不可用'
+        };
+        return labels[data.error] || ('查询失败：' + data.error);
+    }
+
+    function sourceView(data) {
+        if (data.error) {
+            dom.content(sourceResult, errorText(data));
+            return;
+        }
+        if (!data.found) {
+            dom.content(sourceResult, '该 IP 在所选时间范围内没有日志样本，也没有可用的 GeoIP 缓存或黑名单记录。');
+            return;
+        }
+        var geo = data.geoip || {};
+        var location = [geo.country_name, geo.region, geo.city].filter(Boolean).join(' / ');
+        var ban = data.ban;
+        var score = data.behavior_score || {};
+        var scoreText = score.score == null ? '证据不足' :
+            score.score + ' / 100 · ' + score.level;
+        var summaryRows = [
+            ['来源 IP', data.ip],
+            ['国家 / 地区 / 城市', location || '未知（GeoIP 缓存未命中）'],
+            ['ASN / 网络组织', geo.asn ? 'AS' + geo.asn + ' ' + (geo.asn_org || '') : '未知'],
+            ['统计范围', data.period_label],
+            ['日志样本', data.samples],
+            ['不同目标 IP / 端口 / 协议', data.unique_targets + ' / ' + data.unique_ports + ' / ' + data.unique_protocols],
+            ['活跃时间桶', data.active_buckets],
+            ['首次 / 最近样本', timeString(data.first_event) + ' / ' + timeString(data.last_event)],
+            ['当前黑名单状态', ban ? (ban.active ? '活跃 · 剩余 ' + durationString(ban.remaining_seconds) : '记录已过期') : '未发现当前封禁记录'],
+            ['本地行为观察评分', scoreText]
+        ];
+        var scoreRows = (score.components || []).map(function(item) {
+            return [item.label, item.points + ' / ' + item.max];
+        });
+        var events = (data.events || []).map(function(item) {
+            return [timeString(item.ts), item.dst, item.port, item.proto];
+        });
+        dom.content(sourceResult, [
+            table(['字段', '结果'], summaryRows),
+            E('h4', {}, '评分构成（不含 GeoIP 国家、城市或 ASN 名称）'),
+            table(['观察维度', '得分'], scoreRows),
+            E('div', { 'class': 'gw-columns gw-profile-columns' }, [
+                panel('目标端口', table(['端口', '样本数'],
+                    (data.top_ports || []).map(function(item) { return [item.port, item.samples]; }))),
+                panel('目标地址', table(['目标 IP', '样本数'],
+                    (data.top_targets || []).map(function(item) { return [item.dst, item.samples]; }))),
+                panel('协议分布', table(['协议', '样本数'],
+                    (data.top_protocols || []).map(function(item) { return [item.proto, item.samples]; })))
+            ]),
+            E('h4', {}, '最近日志样本（最多 30 条）'),
+            table(['时间', '目标 IP', '目标端口', '协议'], events),
+            E('p', { 'class': 'gw-muted' }, data.disclaimer || '')
+        ]);
+    }
+
+    function asnView(data) {
+        if (data.error) {
+            dom.content(asnResult, errorText(data));
+            return;
+        }
+        if (!data.found) {
+            dom.content(asnResult, '该 ASN 在所选时间范围内没有匹配到 GeoIP 已识别的日志来源。');
+            return;
+        }
+        var metrics = E('div', { 'class': 'gw-analytics-metrics' }, [
+            card('来源 IP', data.unique_sources, '按来源地址去重'),
+            card('日志样本', data.samples, '受内核日志限速影响'),
+            card('目标 IP / 端口', data.unique_targets + ' / ' + data.unique_ports, '本机观测范围'),
+            card('当前活跃封禁来源', data.active_banned_sources, '当前快照，不是区间累计')
+        ]);
+        var clusters = (data.correlations || []).map(function(item) {
+            return [
+                timeString(item.time), item.dst, item.port, item.proto,
+                item.source_count, item.samples,
+                (item.sources || []).map(function(source) { return source.ip; }).join(', ')
+            ];
+        });
+        dom.content(asnResult, [
+            E('p', {}, 'AS' + data.asn + ' ' + (data.organization || '') + ' · ' + data.period_label),
+            metrics,
+            E('div', { 'class': 'gw-columns gw-profile-columns' }, [
+                panel('样本最多的来源 IP', table(['来源 IP', '国家', '城市', '样本数'],
+                    (data.top_sources || []).map(function(item) {
+                        return [item.ip, item.country_name || item.country_code,
+                            item.city, item.samples];
+                    }))),
+                panel('目标端口', table(['端口', '样本数'],
+                    (data.top_ports || []).map(function(item) { return [item.port, item.samples]; }))),
+                panel('目标地址', table(['目标 IP', '样本数'],
+                    (data.top_targets || []).map(function(item) { return [item.dst, item.samples]; }))),
+                panel('协议分布', table(['协议', '样本数'],
+                    (data.top_protocols || []).map(function(item) { return [item.proto, item.samples]; })))
+            ]),
+            E('h4', {}, '同一 ASN 内的共同观测线索（至少 2 个来源 IP）'),
+            table(['时间', '目标 IP', '端口', '协议', '来源 IP 数', '样本数', '来源 IP'],
+                clusters),
+            E('p', { 'class': 'gw-muted' },
+                'ASN 代表网络注册归属，不代表恶意组织。大型云厂商、CDN、VPN 和托管网络可能承载大量不同客户。' +
+                (data.disclaimer || ''))
+        ]);
+    }
+
+    function correlationView(data) {
+        if (data.error) {
+            dom.content(correlationResult, errorText(data));
+            return;
+        }
+        var rows = (data.clusters || []).map(function(item) {
+            return [
+                timeString(item.time), item.dst, item.port, item.proto,
+                item.source_count, item.samples,
+                (item.sources || []).map(function(source) { return source.ip; }).join(', ')
+            ];
+        });
+        dom.content(correlationResult, [
+            E('p', {}, data.period_label + ' · 至少 ' + data.minimum_sources + ' 个不同来源 IP'),
+            table(['时间桶', '目标 IP', '端口', '协议', '来源 IP 数', '样本数', '代表性来源'],
+                rows),
+            E('p', { 'class': 'gw-muted' },
+                '共同命中只表示相同时间桶内的网络观测特征，不足以证明来源属于同一攻击者或同一组织。' +
+                (data.disclaimer || ''))
+        ]);
+    }
+
+    sourceButton.addEventListener('click', function() {
+        var value = ipInput.value.trim();
+        if (!value || state.sourceBusy) return;
+        state.sourceBusy = true;
+        sourceButton.disabled = true;
+        dom.content(sourceResult, '正在生成来源画像……');
+        getSourceProfile(value, period.value).then(sourceView).catch(function(error) {
+            dom.content(sourceResult, '来源画像 RPC 失败：' + String(error));
+        }).finally(function() {
+            state.sourceBusy = false;
+            sourceButton.disabled = false;
+        });
+    });
+    ipInput.addEventListener('keydown', function(event) {
+        if (event.key == 'Enter') sourceButton.click();
+    });
+
+    asnButton.addEventListener('click', function() {
+        var value = Number(asnInput.value);
+        if (!Number.isInteger(value) || value < 1 || value > 4294967295 || state.asnBusy) {
+            dom.content(asnResult, '请输入有效 ASN（1 至 4294967295）。');
+            return;
+        }
+        state.asnBusy = true;
+        asnButton.disabled = true;
+        dom.content(asnResult, '正在生成 ASN 画像……');
+        getAsnProfile(value, period.value).then(asnView).catch(function(error) {
+            dom.content(asnResult, 'ASN 画像 RPC 失败：' + String(error));
+        }).finally(function() {
+            state.asnBusy = false;
+            asnButton.disabled = false;
+        });
+    });
+    asnInput.addEventListener('keydown', function(event) {
+        if (event.key == 'Enter') asnButton.click();
+    });
+
+    correlationButton.addEventListener('click', function() {
+        if (state.correlationBusy) return;
+        state.correlationBusy = true;
+        correlationButton.disabled = true;
+        dom.content(correlationResult, '正在分析共同观测线索……');
+        getCorrelations(period.value).then(correlationView).catch(function(error) {
+            dom.content(correlationResult, '关联分析 RPC 失败：' + String(error));
+        }).finally(function() {
+            state.correlationBusy = false;
+            correlationButton.disabled = false;
+        });
+    });
+
+    var controls = E('div', { 'class': 'gw-profile-controls' }, [
+        E('label', {}, ['统计范围', period]),
+        E('label', {}, ['来源 IP', ipInput]),
+        sourceButton,
+        E('label', {}, ['ASN', asnInput]),
+        asnButton,
+        correlationButton
+    ]);
+    return panel('攻击来源画像与关联分析（只读）', [
+        controls,
+        panel('来源 IP 画像', sourceResult),
+        panel('ASN / 网络组织画像', asnResult),
+        panel('跨来源关联线索', correlationResult),
+        E('p', { 'class': 'gw-muted' },
+            '本模块只分析已有 SQLite 日志样本和 GeoIP 缓存，不修改 nftables、不封禁或解封 IP、不调用公网逐 IP 查询。')
+    ]);
+}
+
+function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode) {
     var counters = d.counters || {};
     var total = (counters.black4 || 0) + (counters.geo4 || 0) +
                 (counters.black6 || 0) + (counters.geo6 || 0);
@@ -618,6 +865,7 @@ function draw(d, lookupNode, blacklistNode, analyticsNode) {
         ]),
         lookupNode || E('span'),
         analyticsNode || E('span'),
+        profileNode || E('span'),
         E('div', { 'class': 'gw-columns' }, [
             panel('海外来源国家排行（活跃封禁 IP）', table(['国家', '国家代码', 'IP 数'],
                 (d.top_countries || []).map(function(r) { return [r.country, r.code, r.ips]; }))),
@@ -650,11 +898,12 @@ return view.extend({
         var lookup = lookupPanel();
         var blacklist = blacklistPanel();
         var analytics = analyticsPanel();
-        var app = draw(data, lookup, blacklist, analytics);
+        var profile = profilePanel();
+        var app = draw(data, lookup, blacklist, analytics, profile);
         var root = E('div', {}, app);
         poll.add(function() {
             return readStatus('/tmp/geowan-console/status.json').then(function(next) {
-                var refreshed = draw(dataFromRpc(next), lookup, blacklist, analytics);
+                var refreshed = draw(dataFromRpc(next), lookup, blacklist, analytics, profile);
                 dom.content(root, refreshed);
             }).catch(function() {
                 /* Keep the last known snapshot visible during an RPC outage. */

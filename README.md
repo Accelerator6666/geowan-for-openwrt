@@ -1,8 +1,8 @@
-# GeoWAN for OpenWrt — GeoWAN Console v0.4.0
+# GeoWAN for OpenWrt — GeoWAN Console v0.5.0（开发预览）
 
 为 **OpenWrt 25.12 / firewall4 / nftables** 设计的独立 GeoIP 防护可视化和持久化伴侣，中文 LuCI 页面，无额外监听端口。
 
-> **状态：v0.4.0 已在用户的 OpenWrt 25.12.3 环境完成基础功能与分页实机验收。其他设备安装前仍需自行预检和备份。**
+> **状态：v0.5.0 开发预览；尚未在目标路由器做实机验收。请先备份再部署。**
 > 该组件只观测已经存在的 GeoWAN nftables 规则，不会修改 WAN 防火墙策略、DNAT、PPPoE、daed 或代理分流。
 
 ## 功能
@@ -14,6 +14,7 @@
 - 可选离线 DB-IP Lite MMDB 归属查询：国家、洲、地区/城市、ASN 和网络组织；数据在本机查询，不调用逐 IP 公网 API。
 - LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
 - v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
+- v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。来源画像提供本地行为观察评分及可解释分项；ASN 画像展示来源 IP、目标地址、端口、协议和共同观测簇。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
 - 不在 LAN/WAN 开放新端口，不将日志发布到公网，不需要 Node/npm、Docker 或独立 Web 服务。
 
 ## 运行要求
@@ -28,7 +29,7 @@
 - GeoIP 为可选功能：安装 `python3-maxminddb` 后运行 DB-IP Lite MMDB 更新器；缺少 reader 或数据库时不影响拦截与基础监控。
 - 数据库 /etc/geowan-console/telemetry.sqlite3，目录权限 0700；状态文件 /tmp/geowan-console/status.json。
 
-稳定分支 `main` 基于已实机验收的 v0.3.0，不改变 SQLite schema，不新增写入型 RPC；继续复用只读 `list_bans`、`get_ban` 和 `analytics` API。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
+开发分支 `develop-v0.5.0` 基于已实机验收的 v0.4.0。v0.5.0 继续不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`，新增只读 `source_profile`、`asn_profile` 和 `correlations`。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
 
 ## 第一阶段：只读预检
 
@@ -44,7 +45,7 @@
     apk update
     apk add python3 python3-sqlite3 python3-maxminddb git
     cd /root
-    git clone --depth 1 --branch main https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
+    git clone --depth 1 --branch develop-v0.5.0 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
     cd /root/geowan-source
     sh preflight.sh
     sh install.sh
@@ -96,9 +97,20 @@
 ## 测试
 
     python3 -m unittest discover -s tests -v
+    python3 -m py_compile agent/*.py rpcd/geowan
     sh -n install.sh uninstall.sh scripts/*.sh preflight.sh
     node --check luci/overview.js
 
-## 仓库与开发分支
 
-此仓库是 GeoWAN for OpenWrt 的独立代码库。`main` 保存实机验证的 v0.4.0；`develop-v0.5.0` 用于来源 IP / ASN 画像及关联分析，未通过实机验收前不建议在生产路由器部署。
+## v0.5.0 画像与评分说明
+
+- 来源 IP 画像按所选时间范围聚合 `events`，最多返回 10 个目标端口、10 个目标地址、8 个协议和 30 条事件样本。
+- ASN 画像只纳入当前 GeoIP 数据库版本中成功识别 ASN 的事件来源；来源 IP 列表最多 20 条，端口/目标地址各最多 10 条，协议最多 8 条。
+- 关联簇按目标 IP、目标端口、协议和时间桶聚合。全局关联至少需要 3 个不同来源 IP；单 ASN 内关联至少需要 2 个不同来源 IP。代表性来源最多显示 10 个。
+- 来源观察评分由重复样本、目标端口多样性、目标地址多样性、跨时间桶重复出现和最近活动时间组成。样本少于 3 条时不评分，显示“证据不足”。
+- 评分不使用国家、城市、ASN 名称或云服务商身份作为恶意证据；不等同于威胁情报或攻击者归因，不参与防火墙决策。
+- 内核日志存在限速，所有画像、评分、排行和关联结果均是已采集样本的观察结果，不代表完整攻击总量。
+
+## 独立仓库说明
+
+此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的 v0.4.0；`develop-v0.5.0` 是尚未完成目标设备验收的开发分支。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
