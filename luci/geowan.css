@@ -24,3 +24,14 @@
 .gw-ttl-warn{display:inline-block;padding:3px 7px;border-radius:6px;background:#fff0d6;color:#a55000;font-weight:700}
 .gw-blacklist-table{min-width:1450px}
 @media(max-width:520px){.gw-page-size{width:100%;justify-content:center}.gw-detail-heading{align-items:flex-start}}
+
+/* v0.5.0 read-only source and ASN profiling */
+.gw-profile-controls{display:grid;grid-template-columns:minmax(150px,1fr) minmax(180px,1.3fr) auto minmax(150px,1fr) auto auto;gap:9px;align-items:end;margin-bottom:14px}
+.gw-profile-controls label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#69778b;min-width:0}
+.gw-profile-controls input,.gw-profile-controls select{width:100%;min-width:0;min-height:36px}
+.gw-profile-result{min-height:28px}
+.gw-profile-result .gw-panel{box-shadow:none;margin:12px 0;padding:13px}
+.gw-profile-columns{margin:12px 0}
+.gw-profile-result h4{font-size:14px;margin:14px 0 8px}
+@media(max-width:1050px){.gw-profile-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){.gw-profile-controls{grid-template-columns:1fr 1fr}.gw-profile-controls button{width:100%}}

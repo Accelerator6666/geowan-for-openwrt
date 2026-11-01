@@ -6,11 +6,35 @@ pass() { printf '[ OK ] %s\n' "$1"; }
 warn() { printf '[WARN] %s\n' "$1"; }
 fail() { printf '[FAIL] %s\n' "$1"; FAIL=1; }
 
+BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
 echo "===== SYSTEM ====="
 if [ "$(id -u)" = 0 ]; then pass "root"; else fail "run as root"; fi
 if command -v ubus >/dev/null 2>&1; then ubus call system board; else fail "ubus missing"; fi
 nft --version 2>&1 || fail "nft missing"
 fw4 -V 2>&1 | head -n 2 || true
+
+echo
+echo "===== SOURCE CHECKOUT ====="
+if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ]; then
+    if /usr/bin/python3 -m py_compile "$BASE"/agent/*.py "$BASE/rpcd/geowan"; then
+        pass "GeoWAN Python source syntax"
+    else
+        fail "GeoWAN Python source syntax"
+    fi
+    if "$BASE/rpcd/geowan" list | /usr/bin/python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+required={"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations"}
+assert set(d)==required, d
+'; then
+        pass "rpcd read-only method schemas"
+    else
+        fail "rpcd read-only method schemas"
+    fi
+else
+    fail "v0.5.0 source modules missing"
+fi
 
 echo
 echo "===== DEPENDENCIES ====="
