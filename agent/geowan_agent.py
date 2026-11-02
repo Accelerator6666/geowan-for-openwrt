@@ -544,7 +544,7 @@ def build_status(conn, now, sizes, errors):
         "SELECT (ts/3600)*3600, COUNT(*) FROM events WHERE ts >= ? GROUP BY (ts/3600)",
         (bucket_start,)))
     return {
-        "version": "0.5.0", "updated": now, "status": "degraded" if errors else "ok",
+        "version": "0.5.1", "updated": now, "status": "degraded" if errors else "ok",
         "errors": errors, "set_sizes": sizes, "counters": read_counters(),
         "active_bans": active, "samples_24h": total, "top_sources": top_ip,
         "top_ports": top_port, "events": events, "blacklist": banned,
