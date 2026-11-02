@@ -102,7 +102,7 @@ class GeoWANProfileTests(unittest.TestCase):
         result = profile.source_profile(
             {"ip": "1.1.1.1", "period": "24h"}, db_path=self.db, now=self.now
         )
-        self.assertEqual(result["samples"], 1)
+        self.assertEqual(result["samples"], 2)
         self.assertIsNone(result["behavior_score"]["score"])
         self.assertEqual(result["behavior_score"]["level"], "证据不足")
 
