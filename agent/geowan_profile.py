@@ -217,6 +217,8 @@ def _correlation_clusters(conn, since, now, bucket, version, asn=None,
             "sources_returned": len(source_items),
             "source_limit": SOURCE_LIMIT,
             "sources_truncated": int(row["source_count"]) > len(source_items),
+            "countries_truncated": int(summary["unique_countries"] or 0) > len(countries),
+            "asns_truncated": int(summary["unique_asns"] or 0) > len(asns),
             "countries": [
                 {
                     "country_code": item["country_code"],
