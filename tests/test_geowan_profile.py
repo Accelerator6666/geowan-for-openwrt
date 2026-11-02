@@ -273,6 +273,8 @@ class GeoWANProfileTests(unittest.TestCase):
         self.assertEqual(cluster["unique_asns"], 27)
         self.assertEqual(cluster["sources_returned"], 27)
         self.assertFalse(cluster["sources_truncated"])
+        self.assertFalse(cluster["countries_truncated"])
+        self.assertFalse(cluster["asns_truncated"])
         self.assertEqual(len(cluster["sources"]), 27)
         self.assertEqual(
             sum(item["source_count"] for item in cluster["countries"]), 27
@@ -288,6 +290,35 @@ class GeoWANProfileTests(unittest.TestCase):
         self.assertEqual(
             cluster["geoip_unresolved_sources"], 0
         )
+
+
+    def test_global_correlation_marks_source_list_truncation(self):
+        conn = sqlite3.connect(self.db)
+        conn.executemany(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            [
+                (
+                    "many-%03d" % index, self.now - 120, 4,
+                    "8.8.8.%d" % (index + 10),
+                    "203.0.113.10", 45678, "UDP"
+                )
+                for index in range(101)
+            ]
+        )
+        conn.commit()
+        conn.close()
+
+        result = profile.correlations(
+            {"period": "24h"}, db_path=self.db, now=self.now
+        )
+        cluster = next(
+            item for item in result["clusters"]
+            if item["dst"] == "203.0.113.10"
+            and item["port"] == 45678
+        )
+        self.assertEqual(cluster["source_count"], 101)
+        self.assertEqual(cluster["sources_returned"], 100)
+        self.assertTrue(cluster["sources_truncated"])
 
     def test_correlations_reject_invalid_period(self):
         self.assertEqual(
