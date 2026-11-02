@@ -747,19 +747,100 @@ function profilePanel() {
             dom.content(correlationResult, errorText(data));
             return;
         }
-        var rows = (data.clusters || []).map(function(item) {
+
+        var clusters = data.clusters || [];
+        var rows = clusters.map(function(item) {
             return [
                 timeString(item.time), item.dst, item.port, item.proto,
-                item.source_count, item.samples,
-                (item.sources || []).map(function(source) { return source.ip; }).join(', ')
+                item.source_count, item.unique_countries || 0,
+                item.unique_asns || 0, item.samples
             ];
         });
+
+        var details = clusters.map(function(item) {
+            var countryRows = (item.countries || []).map(function(country) {
+                return [
+                    country.country_name || country.country_code,
+                    country.country_code,
+                    country.source_count,
+                    country.samples
+                ];
+            });
+            var asnRows = (item.asns || []).map(function(asn) {
+                return [
+                    'AS' + asn.asn,
+                    asn.organization,
+                    asn.source_count,
+                    asn.samples
+                ];
+            });
+            var sourceRows = (item.sources || []).map(function(source) {
+                return [
+                    source.ip,
+                    source.country_name || source.country_code || '未知',
+                    source.asn ? 'AS' + source.asn : '未知',
+                    source.asn_org || '',
+                    source.samples
+                ];
+            });
+            var heading = timeString(item.time) + ' · ' +
+                item.dst + ':' + item.port + '/' + item.proto +
+                ' · ' + item.source_count + ' 源 / ' +
+                (item.unique_countries || 0) + ' 国家或地区 / ' +
+                (item.unique_asns || 0) + ' ASN';
+
+            return E('details', { 'class': 'gw-correlation-detail' }, [
+                E('summary', {}, heading),
+                table(['指标', '结果'], [
+                    ['目标服务', item.dst + ':' + item.port + '/' + item.proto],
+                    ['不同来源 IP', item.source_count],
+                    ['不同国家 / 地区', item.unique_countries || 0],
+                    ['不同 ASN', item.unique_asns || 0],
+                    ['国家归属已识别来源', item.country_known_sources || 0],
+                    ['ASN 归属已识别来源', item.asn_known_sources || 0],
+                    ['GeoIP 完全未识别来源', item.geoip_unresolved_sources || 0],
+                    ['日志样本', item.samples],
+                    ['固定时间桶', timeString(item.bucket_start || item.time) +
+                        ' — ' + timeString(item.bucket_end)]
+                ]),
+                E('div', { 'class': 'gw-columns gw-profile-columns' }, [
+                    panel('国家 / 地区分布', table(
+                        ['国家 / 地区', '代码', '来源 IP', '样本数'],
+                        countryRows
+                    )),
+                    panel('ASN / 网络组织分布', table(
+                        ['ASN', '网络组织', '来源 IP', '样本数'],
+                        asnRows
+                    ))
+                ]),
+                E('h4', {}, '来源 IP 明细（最多 ' + (item.source_limit || 100) + ' 条）'),
+                table(
+                    ['来源 IP', '国家 / 地区', 'ASN', '网络组织', '样本数'],
+                    sourceRows
+                ),
+                item.sources_truncated ?
+                    E('p', { 'class': 'gw-error' },
+                        '来源总数超过单簇返回上限 ' + item.source_limit +
+                        '，当前仅显示 ' + item.sources_returned + ' 条。') :
+                    E('p', { 'class': 'gw-muted' },
+                        '已显示该关联簇的全部 ' + item.sources_returned + ' 个来源 IP。')
+            ]);
+        });
+
         dom.content(correlationResult, [
-            E('p', {}, data.period_label + ' · 至少 ' + data.minimum_sources + ' 个不同来源 IP'),
-            table(['时间桶', '目标 IP', '端口', '协议', '来源 IP 数', '样本数', '代表性来源'],
-                rows),
+            E('p', {}, data.period_label + ' · 至少 ' +
+                data.minimum_sources + ' 个不同来源 IP · 固定 UTC 时间桶 ' +
+                data.bucket_seconds + ' 秒'),
+            table(
+                ['时间桶', '目标 IP', '端口', '协议', '来源 IP 数',
+                    '国家 / 地区数', 'ASN 数', '样本数'],
+                rows
+            ),
+            E('h4', {}, '关联簇详情（展开查看国家、ASN 和完整来源列表）'),
+            details,
             E('p', { 'class': 'gw-muted' },
-                '共同命中只表示相同时间桶内的网络观测特征，不足以证明来源属于同一攻击者或同一组织。' +
+                '国家和 ASN 数量按已识别的不同来源 IP 去重统计。GeoIP 未命中来源仍计入来源 IP 总数。' +
+                '共同命中只表示固定时间桶内的网络观测特征，不足以证明来源属于同一攻击者或同一组织。' +
                 (data.disclaimer || ''))
         ]);
     }
