@@ -774,6 +774,13 @@ function profilePanel() {
                     asn.samples
                 ];
             });
+            var breakdownWarnings = [];
+            if (item.countries_truncated) {
+                breakdownWarnings.push('国家 / 地区分布仅显示前 20 项');
+            }
+            if (item.asns_truncated) {
+                breakdownWarnings.push('ASN 分布仅显示前 20 项');
+            }
             var sourceRows = (item.sources || []).map(function(source) {
                 return [
                     source.ip,
@@ -823,7 +830,10 @@ function profilePanel() {
                         '来源总数超过单簇返回上限 ' + item.source_limit +
                         '，当前仅显示 ' + item.sources_returned + ' 条。') :
                     E('p', { 'class': 'gw-muted' },
-                        '已显示该关联簇的全部 ' + item.sources_returned + ' 个来源 IP。')
+                        '已显示该关联簇的全部 ' + item.sources_returned + ' 个来源 IP。'),
+                breakdownWarnings.length ?
+                    E('p', { 'class': 'gw-muted' }, breakdownWarnings.join('；')) :
+                    E('span')
             ]);
         });
 
@@ -836,7 +846,7 @@ function profilePanel() {
                     '国家 / 地区数', 'ASN 数', '样本数'],
                 rows
             ),
-            E('h4', {}, '关联簇详情（展开查看国家、ASN 和完整来源列表）'),
+            E('h4', {}, '关联簇详情（展开查看国家、ASN 和来源 IP 明细）'),
             details,
             E('p', { 'class': 'gw-muted' },
                 '国家和 ASN 数量按已识别的不同来源 IP 去重统计。GeoIP 未命中来源仍计入来源 IP 总数。' +
