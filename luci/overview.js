@@ -776,10 +776,10 @@ function profilePanel() {
             });
             var breakdownWarnings = [];
             if (item.countries_truncated) {
-                breakdownWarnings.push('国家 / 地区分布仅显示前 20 项');
+                breakdownWarnings.push('国家 / 地区分布仅显示前 50 项');
             }
             if (item.asns_truncated) {
-                breakdownWarnings.push('ASN 分布仅显示前 20 项');
+                breakdownWarnings.push('ASN 分布仅显示前 50 项');
             }
             var sourceRows = (item.sources || []).map(function(source) {
                 return [
@@ -811,11 +811,11 @@ function profilePanel() {
                         ' — ' + timeString(item.bucket_end)]
                 ]),
                 E('div', { 'class': 'gw-columns gw-profile-columns' }, [
-                    panel('国家 / 地区分布', table(
+                    panel('国家 / 地区分布（最多 50 项）', table(
                         ['国家 / 地区', '代码', '来源 IP', '样本数'],
                         countryRows
                     )),
-                    panel('ASN / 网络组织分布', table(
+                    panel('ASN / 网络组织分布（最多 50 项）', table(
                         ['ASN', '网络组织', '来源 IP', '样本数'],
                         asnRows
                     ))
