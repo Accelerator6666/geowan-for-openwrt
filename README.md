@@ -1,8 +1,8 @@
-# GeoWAN for OpenWrt — GeoWAN Console v0.5.0（开发预览）
+# GeoWAN for OpenWrt — GeoWAN Console v0.5.1（开发预览）
 
 为 **OpenWrt 25.12 / firewall4 / nftables** 设计的独立 GeoIP 防护可视化和持久化伴侣，中文 LuCI 页面，无额外监听端口。
 
-> **状态：v0.5.0 开发预览；尚未在目标路由器做实机验收。请先备份再部署。**
+> **状态：v0.5.1 开发预览；尚未在目标路由器完成 v0.5.1 实机验收。请先备份再部署。**
 > 该组件只观测已经存在的 GeoWAN nftables 规则，不会修改 WAN 防火墙策略、DNAT、PPPoE、daed 或代理分流。
 
 ## 功能
@@ -14,7 +14,7 @@
 - 可选离线 DB-IP Lite MMDB 归属查询：国家、洲、地区/城市、ASN 和网络组织；数据在本机查询，不调用逐 IP 公网 API。
 - LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
 - v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
-- v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。来源画像提供本地行为观察评分及可解释分项；ASN 画像展示来源 IP、目标地址、端口、协议和共同观测簇。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
+- v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。v0.5.1 修复滚动窗口导致的时间桶漂移，统一使用固定 UTC Unix epoch 时间边界；关联簇增加国家/地区、ASN 数量及分布，并返回最多 100 个来源 IP 的明细；来源列表或超过 50 项的国家 / ASN 分布会明确标记截断。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
 - 不在 LAN/WAN 开放新端口，不将日志发布到公网，不需要 Node/npm、Docker 或独立 Web 服务。
 
 ## 运行要求
@@ -29,7 +29,7 @@
 - GeoIP 为可选功能：安装 `python3-maxminddb` 后运行 DB-IP Lite MMDB 更新器；缺少 reader 或数据库时不影响拦截与基础监控。
 - 数据库 /etc/geowan-console/telemetry.sqlite3，目录权限 0700；状态文件 /tmp/geowan-console/status.json。
 
-开发分支 `develop-v0.5.0` 基于已实机验收的 v0.4.0。v0.5.0 继续不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`，新增只读 `source_profile`、`asn_profile` 和 `correlations`。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
+开发分支 `develop-v0.5.1` 从 `develop-v0.5.0` 继续开发。v0.5.1 不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`、`source_profile`、`asn_profile` 和 `correlations`。画像及关联模块统一使用固定 UTC Unix epoch 时间桶，避免滚动查询窗口改变历史分组。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
 
 ## 第一阶段：只读预检
 
@@ -45,7 +45,7 @@
     apk update
     apk add python3 python3-sqlite3 python3-maxminddb git
     cd /root
-    git clone --depth 1 --branch develop-v0.5.0 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
+    git clone --depth 1 --branch develop-v0.5.1 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
     cd /root/geowan-source
     sh preflight.sh
     sh install.sh
@@ -102,6 +102,19 @@
     node --check luci/overview.js
 
 
+## v0.5.1 固定时间桶与跨 ASN 关联
+
+- 时间桶按 Unix epoch 固定边界对齐：5 分钟、1 小时或 1 天；查询窗口只决定纳入哪些事件，不再作为时间桶起点。
+- `source_profile` 的活跃时间桶、`asn_profile` 内部关联和全局 `correlations` 使用同一时间边界定义。
+- 关联簇按目标 IP、端口、协议和固定时间桶分组；来源 IP 总数始终统计全部匹配来源。
+- 每个关联簇增加已识别国家/地区数、ASN 数、国家分布、ASN / 网络组织分布及 GeoIP 未识别来源数。
+- 每个关联簇最多返回 100 个来源 IP，附带国家和 ASN 信息；若超过上限，`sources_truncated` 明确为 true，避免把截断列表误认为完整列表。
+- 国家和 ASN 数量均按不同来源 IP 去重，不按日志样本数计算；未知 GeoIP 来源仍计入来源 IP 总数。
+- 时间桶显示的是固定桶起点，统计仅覆盖所选查询窗口内的样本；查询窗口首尾可能出现部分时间桶。
+- 不新增数据库表或索引，不改变防火墙规则、nftables 集合、监听端口、代理分流或现有采集行为。
+
+v0.5.1 回归测试使用已在目标路由器只读核对的案例：`112.82.232.30:40163/UDP`，27 个不同来源 IP、20 个国家/地区、27 个 ASN。测试使用合成 SQLite 数据，不包含生产路由器日志或用户 IP 清单。
+
 ## v0.5.0 画像与评分说明
 
 - 来源 IP 画像按所选时间范围聚合 `events`，最多返回 10 个目标端口、10 个目标地址、8 个协议和 30 条事件样本。
@@ -113,4 +126,4 @@
 
 ## 独立仓库说明
 
-此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的 v0.4.0；`develop-v0.5.0` 是尚未完成目标设备验收的开发分支。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
+此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的 v0.4.0；`develop-v0.5.0` 保留 v0.5.0 开发预览；`develop-v0.5.1` 是固定时间桶和跨 ASN / 国家关联增强分支，尚未完成目标设备验收。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。

@@ -21,7 +21,10 @@ DISCLAIMER = (
     "画像、评分和关联线索仅基于本机已采集的 GEOWAN 内核日志样本；"
     "内核日志限速可能丢弃部分记录，不代表完整连接或攻击总量。"
     "GeoIP 城市信息是网络归属估算，不代表人员真实所在地。"
+    "时间桶按 Unix epoch 固定边界对齐，统计窗口首尾可能只覆盖部分时间桶。"
 )
+SOURCE_LIMIT = 100
+DISTRIBUTION_LIMIT = 50
 
 
 def _open_readonly(db_path):
@@ -88,60 +91,153 @@ def _score(samples, ports, targets, buckets, last_event, now):
 
 def _correlation_clusters(conn, since, now, bucket, version, asn=None,
                           min_sources=3, limit=10):
+    """Return bounded, epoch-aligned correlation clusters and GeoIP breakdowns."""
     clauses = ["e.ts>=?", "e.ts<=?", "e.dst IS NOT NULL"]
-    params = [since, now]
-    join = ""
+    join = (
+        " LEFT JOIN geoip_cache g ON g.ip=e.src "
+        "AND g.database_version=? AND g.lookup_status='ok' "
+    )
+    params = [version, since, now]
     if asn is not None:
-        join = (
-            " JOIN geoip_cache g ON g.ip=e.src AND "
-            "g.database_version=? AND g.asn=? AND g.lookup_status='ok' "
-        )
-        params = [version, asn] + params
+        clauses.append("g.asn=?")
+        params.append(asn)
+    where = " AND ".join(clauses)
 
     sql = (
         "SELECT e.dst,e.port,e.proto,"
-        "CAST((e.ts-?)/? AS INTEGER) AS bucket_index,"
+        "CAST(e.ts / ? AS INTEGER) AS bucket_index,"
         "COUNT(*) AS samples,COUNT(DISTINCT e.src) AS source_count "
         "FROM events e" + join +
-        " WHERE " + " AND ".join(clauses) +
+        " WHERE " + where +
         " GROUP BY e.dst,e.port,e.proto,bucket_index "
         "HAVING COUNT(DISTINCT e.src)>=? "
-        "ORDER BY source_count DESC,samples DESC,e.dst ASC LIMIT ?"
+        "ORDER BY source_count DESC,samples DESC,e.dst ASC,"
+        "e.port ASC,e.proto ASC,bucket_index DESC LIMIT ?"
     )
     rows = conn.execute(
-        sql, [since, bucket] + params + [min_sources, limit]
+        sql, [bucket] + params + [min_sources, limit]
     ).fetchall()
 
     clusters = []
     for row in rows:
-        start = since + int(row["bucket_index"]) * bucket
-        source_sql = (
-            "SELECT e.src,COUNT(*) AS samples FROM events e" + join +
-            " WHERE " + " AND ".join(clauses) +
+        bucket_index = int(row["bucket_index"])
+        start = bucket_index * bucket
+        cluster_where = (
+            where +
             " AND e.dst=? AND e.port IS ? AND e.proto IS ? "
-            "AND CAST((e.ts-?)/? AS INTEGER)=? "
-            "GROUP BY e.src ORDER BY samples DESC,e.src ASC LIMIT 10"
+            "AND CAST(e.ts / ? AS INTEGER)=?"
         )
-        source_params = []
-        if asn is not None:
-            source_params.extend([version, asn])
-        source_params.extend(params[-2:] if asn is not None else params)
-        source_params.extend([
-            row["dst"], row["port"], row["proto"], since, bucket,
-            int(row["bucket_index"])
-        ])
-        sources = conn.execute(source_sql, source_params).fetchall()
+        cluster_params = params + [
+            row["dst"], row["port"], row["proto"], bucket, bucket_index
+        ]
+
+        rollup = (
+            "WITH source_rollup AS ("
+            " SELECT e.src AS ip,COUNT(*) AS samples,"
+            " MAX(NULLIF(g.country_code,'')) AS country_code,"
+            " MAX(NULLIF(g.country_name,'')) AS country_name,"
+            " MAX(g.asn) AS asn,"
+            " MAX(NULLIF(g.asn_org,'')) AS asn_org "
+            " FROM events e" + join +
+            " WHERE " + cluster_where +
+            " GROUP BY e.src"
+            ") "
+        )
+
+        summary = conn.execute(
+            rollup +
+            "SELECT COUNT(*) AS total_sources,"
+            "COUNT(DISTINCT country_code) AS unique_countries,"
+            "COUNT(DISTINCT asn) AS unique_asns,"
+            "SUM(CASE WHEN country_code IS NOT NULL THEN 1 ELSE 0 END) "
+            "AS country_known_sources,"
+            "SUM(CASE WHEN asn IS NOT NULL THEN 1 ELSE 0 END) "
+            "AS asn_known_sources,"
+            "SUM(CASE WHEN country_code IS NULL AND asn IS NULL "
+            "THEN 1 ELSE 0 END) AS geoip_unresolved_sources "
+            "FROM source_rollup",
+            cluster_params
+        ).fetchone()
+
+        sources = conn.execute(
+            rollup +
+            "SELECT ip,samples,country_code,country_name,asn,asn_org "
+            "FROM source_rollup "
+            "ORDER BY samples DESC,ip ASC LIMIT ?",
+            cluster_params + [SOURCE_LIMIT]
+        ).fetchall()
+
+        countries = conn.execute(
+            rollup +
+            "SELECT country_code,country_name,COUNT(*) AS source_count,"
+            "SUM(samples) AS samples FROM source_rollup "
+            "WHERE country_code IS NOT NULL "
+            "GROUP BY country_code "
+            "ORDER BY source_count DESC,country_code ASC LIMIT ?",
+            cluster_params + [DISTRIBUTION_LIMIT]
+        ).fetchall()
+
+        asns = conn.execute(
+            rollup +
+            "SELECT asn,asn_org,COUNT(*) AS source_count,"
+            "SUM(samples) AS samples FROM source_rollup "
+            "WHERE asn IS NOT NULL "
+            "GROUP BY asn "
+            "ORDER BY source_count DESC,asn ASC LIMIT ?",
+            cluster_params + [DISTRIBUTION_LIMIT]
+        ).fetchall()
+
+        source_items = [
+            {
+                "ip": item["ip"],
+                "samples": item["samples"],
+                "country_code": item["country_code"] or "",
+                "country_name": item["country_name"] or "",
+                "asn": item["asn"],
+                "asn_org": item["asn_org"] or ""
+            }
+            for item in sources
+        ]
         clusters.append({
             "time": start,
+            "bucket_start": start,
+            "bucket_end": start + bucket,
             "dst": row["dst"],
             "port": row["port"],
             "proto": row["proto"] or "UNKNOWN",
-            "samples": row["samples"],
-            "source_count": row["source_count"],
-            "sources": [
-                {"ip": item["src"], "samples": item["samples"]}
-                for item in sources
-            ]
+            "samples": int(row["samples"]),
+            "source_count": int(row["source_count"]),
+            "unique_countries": int(summary["unique_countries"] or 0),
+            "unique_asns": int(summary["unique_asns"] or 0),
+            "country_known_sources": int(summary["country_known_sources"] or 0),
+            "asn_known_sources": int(summary["asn_known_sources"] or 0),
+            "geoip_unresolved_sources": int(
+                summary["geoip_unresolved_sources"] or 0
+            ),
+            "sources_returned": len(source_items),
+            "source_limit": SOURCE_LIMIT,
+            "sources_truncated": int(row["source_count"]) > len(source_items),
+            "countries_truncated": int(summary["unique_countries"] or 0) > len(countries),
+            "asns_truncated": int(summary["unique_asns"] or 0) > len(asns),
+            "countries": [
+                {
+                    "country_code": item["country_code"],
+                    "country_name": item["country_name"] or "",
+                    "source_count": int(item["source_count"]),
+                    "samples": int(item["samples"])
+                }
+                for item in countries
+            ],
+            "asns": [
+                {
+                    "asn": int(item["asn"]),
+                    "organization": item["asn_org"] or "",
+                    "source_count": int(item["source_count"]),
+                    "samples": int(item["samples"])
+                }
+                for item in asns
+            ],
+            "sources": source_items
         })
     return clusters
 
@@ -174,9 +270,9 @@ def source_profile(request, db_path=DB, now=None):
             "SELECT COUNT(*) AS samples,MIN(ts) AS first_event,"
             "MAX(ts) AS last_event,COUNT(DISTINCT dst) AS targets,"
             "COUNT(DISTINCT port) AS ports,COUNT(DISTINCT proto) AS protocols,"
-            "COUNT(DISTINCT CAST((ts-?)/? AS INTEGER)) AS active_buckets "
+            "COUNT(DISTINCT CAST(ts / ? AS INTEGER)) AS active_buckets "
             "FROM events WHERE src=? AND ts>=? AND ts<=?",
-            (since, bucket, str(address), since, now)
+            (bucket, str(address), since, now)
         ).fetchone()
         samples = int(row["samples"] or 0)
         geo = conn.execute(
@@ -251,6 +347,8 @@ def source_profile(request, db_path=DB, now=None):
             "period_label": config["label"],
             "from_ts": since,
             "to_ts": now,
+            "bucket_seconds": bucket,
+            "bucket_alignment": "UTC Unix epoch",
             "samples": samples,
             "first_event": row["first_event"],
             "last_event": last_event,
@@ -357,6 +455,8 @@ def asn_profile(request, db_path=DB, now=None):
             "period_label": config["label"],
             "from_ts": since,
             "to_ts": now,
+            "bucket_seconds": bucket,
+            "bucket_alignment": "UTC Unix epoch",
             "samples": int(summary["samples"] or 0),
             "unique_sources": int(summary["sources"] or 0),
             "unique_targets": int(summary["targets"] or 0),
@@ -397,6 +497,8 @@ def correlations(request, db_path=DB, now=None):
             "from_ts": since,
             "to_ts": now,
             "minimum_sources": 3,
+            "bucket_seconds": config["bucket"],
+            "bucket_alignment": "UTC Unix epoch",
             "clusters": clusters,
             "disclaimer": DISCLAIMER
         }

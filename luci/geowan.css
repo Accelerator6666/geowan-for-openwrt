@@ -35,3 +35,12 @@
 .gw-profile-result h4{font-size:14px;margin:14px 0 8px}
 @media(max-width:1050px){.gw-profile-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:600px){.gw-profile-controls{grid-template-columns:1fr 1fr}.gw-profile-controls button{width:100%}}
+
+
+/* v0.5.1 fixed-bucket cross-country / ASN correlation details */
+.gw-correlation-detail{border:1px solid #d8dee8;border-radius:8px;padding:10px 12px;margin:10px 0;background:rgba(127,127,127,.025)}
+.gw-correlation-detail>summary{cursor:pointer;font-weight:650;line-height:1.6}
+.gw-correlation-detail[open]>summary{margin-bottom:10px}
+.gw-correlation-detail h4{font-size:14px;margin:12px 0 8px}
+.gw-correlation-detail .gw-profile-columns{margin:8px 0}
+@media(max-width:600px){.gw-correlation-detail{padding:8px}.gw-correlation-detail>summary{font-size:13px}}
