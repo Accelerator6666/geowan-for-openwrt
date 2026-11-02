@@ -33,7 +33,7 @@ assert set(d)==required, d
         fail "rpcd read-only method schemas"
     fi
 else
-    fail "v0.5.0 source modules missing"
+    fail "GeoWAN source modules missing"
 fi
 
 echo
