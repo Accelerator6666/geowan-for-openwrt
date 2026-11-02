@@ -24,7 +24,7 @@ DISCLAIMER = (
     "时间桶按 Unix epoch 固定边界对齐，统计窗口首尾可能只覆盖部分时间桶。"
 )
 SOURCE_LIMIT = 100
-DISTRIBUTION_LIMIT = 20
+DISTRIBUTION_LIMIT = 50
 
 
 def _open_readonly(db_path):
