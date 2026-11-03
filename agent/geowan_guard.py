@@ -427,8 +427,13 @@ def _chain_exists(command_runner=None):
     runner = command_runner or run
     try:
         output = runner("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
+        # nft may render a base-chain priority as either "-2" or
+        # "filter - 2" (the latter is common on OpenWrt nftables builds).
+        priority_matches = re.search(
+            r"\\bpriority\\s+(?:filter\\s+)?-\\s*2\\b", output
+        )
         if ("type filter" not in output or "hook forward" not in output or
-                "priority -2" not in output or "policy accept" not in output or
+                priority_matches is None or "policy accept" not in output or
                 ('comment "%s"' % GUARD_CHAIN_COMMENT) not in output):
             raise RuntimeError("guard_chain_name_conflict")
         return True
