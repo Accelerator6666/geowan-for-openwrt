@@ -5,5 +5,17 @@
   "min_samples": 3,
   "cooldown_seconds": 900,
   "retention_days": 30,
-  "max_alerts": 50000
+  "max_alerts": 50000,
+  "high_frequency_window_seconds": 120,
+  "high_frequency_min_samples": 20,
+  "target_concentration_window_seconds": 300,
+  "target_concentration_min_sources": 8,
+  "target_concentration_min_samples": 12,
+  "blacklist_correlation_enabled": true,
+  "blacklist_window_seconds": 600,
+  "blacklist_min_samples": 2,
+  "asn_correlation_window_seconds": 600,
+  "asn_correlation_min_sources": 4,
+  "asn_correlation_min_samples": 8,
+  "max_source_details": 20
 }
