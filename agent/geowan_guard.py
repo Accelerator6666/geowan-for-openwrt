@@ -33,7 +33,7 @@ DNAT_RULE = re.compile(
 UCI_CONFIG = re.compile(r"^config\s+(\S+)(?:\s+(.+))?$")
 IFNAME = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 DEFAULT_CONFIG = {
-    "enabled": True,
+    "enabled": False,
     "mode": "observe",
     "log_rate_per_second": 2,
     "log_burst": 10
@@ -411,9 +411,10 @@ def render_rules(services, wan_device, rate=2, burst=10):
     return rules
 
 
-def _chain_exists():
+def _chain_exists(command_runner=None):
+    runner = command_runner or run
     try:
-        output = run("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
+        output = runner("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
         if "hook forward" not in output or "priority -2" not in output:
             raise RuntimeError("guard_chain_name_conflict")
         return True
@@ -421,8 +422,10 @@ def _chain_exists():
         return False
 
 
-def apply_rules(services, wan_device, config, chain_exists=None):
-    exists = _chain_exists() if chain_exists is None else bool(chain_exists)
+def apply_rules(services, wan_device, config, chain_exists=None,
+                command_runner=None):
+    runner = command_runner or run
+    exists = _chain_exists(runner) if chain_exists is None else bool(chain_exists)
     lines = []
     if exists:
         lines.append("flush chain inet fw4 %s" % GUARD_CHAIN)
@@ -436,7 +439,7 @@ def apply_rules(services, wan_device, config, chain_exists=None):
         config["log_rate_per_second"], config["log_burst"]
     ))
     script = "\n".join(lines) + "\n"
-    run("nft", "-f", "-", input_text=script)
+    runner("nft", "-f", "-", input_text=script)
     return len(lines) - 1
 
 
@@ -474,23 +477,39 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
                         break
                 except (OSError, subprocess.CalledProcessError):
                     pass
+        previous_row = conn.execute(
+            "SELECT value FROM guard_state WHERE key='runtime'"
+        ).fetchone()
+        try:
+            previous_state = json.loads(previous_row[0]) if previous_row else {}
+        except (TypeError, ValueError):
+            previous_state = {}
+
         if config["enabled"] and config["mode"] == "observe":
             if not wan:
                 raise RuntimeError("wan_device_unavailable")
-            apply_rules(services, wan, config)
+            desired_rules = render_rules(
+                services, wan, config["log_rate_per_second"], config["log_burst"]
+            )
+            rules_fingerprint = hashlib.sha256(
+                "\\n".join(desired_rules).encode("utf-8")
+            ).hexdigest()
+            exists = _chain_exists(runner)
+            if not exists or previous_state.get("rules_fingerprint") != rules_fingerprint:
+                apply_rules(
+                    services, wan, config, chain_exists=exists,
+                    command_runner=runner
+                )
             chain_installed = True
-            installed_rules = len([
-                x for x in services
-                if x.get("runtime_active") and not x.get("conflict")
-            ])
+            installed_rules = len(desired_rules)
             mode = "observe"
         else:
-            try:
-                runner("nft", "flush", "chain", "inet", "fw4", GUARD_CHAIN)
-                chain_installed = True
-            except (OSError, subprocess.CalledProcessError):
-                chain_installed = False
+            exists = _chain_exists(runner)
+            if exists:
+                runner("nft", "delete", "chain", "inet", "fw4", GUARD_CHAIN)
+            chain_installed = False
             installed_rules = 0
+            rules_fingerprint = ""
             mode = "disabled"
 
         conn.execute("UPDATE guard_services SET runtime_active=0,conflict=0,updated_at=?",
@@ -529,6 +548,7 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
             "active_service_count": sum(1 for x in services if x["runtime_active"]),
             "conflict_count": sum(1 for x in services if x["conflict"]),
             "installed_rule_count": installed_rules,
+            "rules_fingerprint": rules_fingerprint if mode == "observe" else "",
             "last_inventory": now,
             "last_error": ""
         }
@@ -545,6 +565,7 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
             "active_service_count": 0,
             "conflict_count": 0,
             "installed_rule_count": 0,
+            "rules_fingerprint": "",
             "last_inventory": now,
             "last_error": str(exc)[:240]
         }
