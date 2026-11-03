@@ -32,6 +32,7 @@ import json,sys
 d=json.load(sys.stdin)
 required={"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations","guard_overview"}
 assert set(d)==required, d
+assert d["guard_overview"] == {"period":"24h", "public_port":0, "alert_rule":"all", "alert_severity":"all"}, d
 '; then
         pass "rpcd read-only method schemas"
     else

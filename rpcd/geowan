@@ -37,7 +37,7 @@ METHODS = {
     "source_profile": {"ip": "", "period": "24h"},
     "asn_profile": {"asn": 15169, "period": "24h"},
     "correlations": {"period": "24h"},
-    "guard_overview": {"period": "24h", "public_port": 0}
+    "guard_overview": {"period": "24h", "public_port": 0, "alert_rule": "all", "alert_severity": "all"}
 }
 
 if len(sys.argv) < 2:

@@ -71,7 +71,7 @@ assert data["analytics"] == {"period":"24h"}, data
 assert data["source_profile"] == {"ip":"", "period":"24h"}, data
 assert data["asn_profile"] == {"asn":15169, "period":"24h"}, data
 assert data["correlations"] == {"period":"24h"}, data
-assert data["guard_overview"] == {"period":"24h", "public_port":0}, data
+assert data["guard_overview"] == {"period":"24h", "public_port":0, "alert_rule":"all", "alert_severity":"all"}, data
 assert data["list_bans"]["page_size"] == 50, data
 ' || {
     echo "rpcd plugin list response invalid; installation stopped."
