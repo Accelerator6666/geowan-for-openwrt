@@ -95,11 +95,12 @@ config redirect 'rdp-other'
         rules = guard.render_rules(rows, "pppoe-wan")
         self.assertFalse(any("58964" in rule for rule in rules))
 
-    def test_render_rules_only_logs_cn_dnat_original_public_port(self):
+    def test_render_rules_log_all_sources_by_family_and_original_public_port(self):
         rows = guard.build_inventory(UCI, NFT, now=1800000000)
         rules = guard.render_rules(rows, "pppoe-wan", rate=2, burst=10)
-        self.assertTrue(any("ip saddr @geo_cn4" in rule for rule in rules))
-        self.assertTrue(any("ip6 saddr @geo_cn6" in rule for rule in rules))
+        self.assertTrue(any("meta nfproto ipv4" in rule for rule in rules))
+        self.assertTrue(any("meta nfproto ipv6" in rule for rule in rules))
+        self.assertFalse(any("@geo_cn4" in rule or "@geo_cn6" in rule for rule in rules))
         self.assertTrue(any("ct original proto-dst 58964" in rule for rule in rules))
         self.assertTrue(all("ct status dnat" in rule for rule in rules))
         self.assertTrue(all("log prefix" in rule and "counter" in rule for rule in rules))
@@ -293,12 +294,26 @@ config redirect 'rdp-other'
             self.assertEqual(data["events"][0]["src"], "8.8.8.8")
             self.assertEqual(data["events"][0]["country_code"], "US")
             self.assertTrue(data["config"]["enabled"])
+            self.assertEqual(data["selected_public_port"], 0)
+            self.assertIn("国内和海外来源", data["disclaimer"])
             self.assertIn("不会执行", data["disclaimer"])
+            filtered = guard.guard_overview(
+                {"period": "24h", "public_port": 58964},
+                db_path=path, now=now, config_path=config
+            )
+            self.assertEqual(filtered["totals"]["samples"], 1)
+            self.assertEqual(filtered["selected_public_port"], 58964)
 
     def test_guard_overview_rejects_invalid_period(self):
         self.assertEqual(
             guard.guard_overview({"period": "all"}),
             {"error": "invalid_period"}
+        )
+
+    def test_guard_overview_rejects_invalid_public_port(self):
+        self.assertEqual(
+            guard.guard_overview({"period": "24h", "public_port": 70000}),
+            {"error": "invalid_port"}
         )
 
 
