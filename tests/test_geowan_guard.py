@@ -120,17 +120,30 @@ config redirect 'rdp-other'
             self.assertFalse(config["enabled"])
             self.assertEqual(config["mode"], "observe")
 
-    def test_existing_chain_must_be_filter_forward_accept(self):
-        with mock.patch.object(
-            guard, "run",
-            return_value="type filter hook forward priority -2; policy accept;"
-        ):
+    def test_existing_chain_must_match_guard_ownership_signature(self):
+        owned = (
+            'type filter hook forward priority -2; policy accept; '
+            'comment "GeoWAN Sensitive Port Guard v0.6.0";'
+        )
+        with mock.patch.object(guard, "run", return_value=owned):
             self.assertTrue(guard._chain_exists())
         with mock.patch.object(
             guard, "run",
-            return_value="type filter hook forward priority -2; policy drop;"
+            return_value=(
+                'type filter hook forward priority -2; policy accept; '
+                'comment "unrelated chain";'
+            )
         ):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, "guard_chain_name_conflict"):
+                guard._chain_exists()
+        with mock.patch.object(
+            guard, "run",
+            return_value=(
+                'type filter hook forward priority -2; policy drop; '
+                'comment "GeoWAN Sensitive Port Guard v0.6.0";'
+            )
+        ):
+            with self.assertRaisesRegex(RuntimeError, "guard_chain_name_conflict"):
                 guard._chain_exists()
 
     def test_validate_guard_rules_uses_nft_check_only(self):
@@ -155,6 +168,9 @@ config redirect 'rdp-other'
         self.assertEqual(result["rule_count"], 4)
         check_call = next(call for call in calls if call[0][:3] == ("nft", "-c", "-f"))
         self.assertIn("add chain inet fw4 geo_guard_forward", check_call[1])
+        self.assertIn(
+            'comment "GeoWAN Sensitive Port Guard v0.6.0"', check_call[1]
+        )
         self.assertIn("ct original proto-dst 58964", check_call[1])
         rule_lines = [
             line for line in check_call[1].splitlines()
