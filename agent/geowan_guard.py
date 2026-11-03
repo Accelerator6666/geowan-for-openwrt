@@ -394,7 +394,7 @@ def render_rules(services, wan_device, rate=2, burst=10):
         port = _valid_port(item.get("public_port"))
         if port is None:
             continue
-        source = "ip saddr @geo_cn4" if family == 4 else "ip6 saddr @geo_cn6"
+        family_match = "meta nfproto ipv4" if family == 4 else "meta nfproto ipv6"
         marker = "GEOWAN_GUARD%d|%s|%d|" % (
             family, item["service_id"], port
         )
@@ -404,7 +404,7 @@ def render_rules(services, wan_device, rate=2, burst=10):
             '%s meta l4proto %s ct original proto-dst %d counter '
             'limit rate %d/second burst %d packets '
             'log prefix "%s" level info' % (
-                GUARD_CHAIN, wan_device, source, proto, port,
+                GUARD_CHAIN, wan_device, family_match, proto, port,
                 rate, burst, marker
             )
         )
@@ -763,16 +763,28 @@ def enrich_guard_sources(conn, resolver, now=None, limit=100):
 
 
 def guard_overview(request, db_path=DB, now=None, config_path=None):
-    """Read-only Guard overview for the LuCI panel."""
+    """Read-only Guard overview, optionally scoped to one original WAN port."""
     if not isinstance(request, dict):
         return {"error": "invalid_period"}
     period = request.get("period", "24h")
     if not isinstance(period, str) or period not in PERIODS:
         return {"error": "invalid_period"}
+    raw_port = request.get("public_port", 0)
+    if isinstance(raw_port, bool):
+        return {"error": "invalid_port"}
+    try:
+        public_port = int(raw_port)
+    except (TypeError, ValueError):
+        return {"error": "invalid_port"}
+    if public_port < 0 or public_port > 65535:
+        return {"error": "invalid_port"}
+
     config = read_config(config_path)
     now = int(time.time()) if now is None else int(now)
     since = now - PERIODS[period]["seconds"]
     bucket = PERIODS[period]["bucket"]
+    filter_sql = " AND e.public_port=?" if public_port else ""
+    filter_params = [public_port] if public_port else []
     conn = None
     try:
         conn = sqlite3.connect(
@@ -799,20 +811,37 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
             """).fetchall()
         ]
         totals = conn.execute("""
-            SELECT COUNT(*) AS samples,COUNT(DISTINCT src) AS unique_sources,
-                   COUNT(DISTINCT service_id) AS unique_services,
-                   COUNT(DISTINCT public_port) AS unique_public_ports
-            FROM guard_events WHERE ts>=? AND ts<=?
-        """, (since, now)).fetchone()
+            SELECT COUNT(*) AS samples,
+                   COUNT(DISTINCT e.src) AS unique_sources,
+                   COUNT(DISTINCT e.service_id) AS unique_services,
+                   COUNT(DISTINCT e.public_port) AS unique_public_ports,
+                   SUM(CASE WHEN g.country_code='CN' THEN 1 ELSE 0 END) AS domestic_samples,
+                   SUM(CASE WHEN g.country_code IS NOT NULL AND g.country_code<>'' AND g.country_code<>'CN'
+                            THEN 1 ELSE 0 END) AS foreign_samples,
+                   COUNT(DISTINCT CASE WHEN g.country_code='CN' THEN e.src END) AS domestic_sources,
+                   COUNT(DISTINCT CASE WHEN g.country_code IS NOT NULL AND g.country_code<>'' AND g.country_code<>'CN'
+                                       THEN e.src END) AS foreign_sources,
+                   COUNT(DISTINCT CASE WHEN g.country_code IS NULL OR g.country_code=''
+                                       THEN e.src END) AS unknown_geo_sources
+            FROM guard_events e
+            LEFT JOIN geoip_cache g ON g.ip=e.src
+            WHERE e.ts>=? AND e.ts<=?
+        """ + filter_sql, [since, now] + filter_params).fetchone()
         top_ports = [
             dict(row) for row in conn.execute("""
-                SELECT public_port,proto,COUNT(*) AS samples,
-                       COUNT(DISTINCT src) AS unique_sources,
-                       COUNT(DISTINCT service_id) AS services
-                FROM guard_events WHERE ts>=? AND ts<=?
-                GROUP BY public_port,proto
-                ORDER BY samples DESC,public_port,proto LIMIT 12
-            """, (since, now)).fetchall()
+                SELECT e.public_port,e.proto,COUNT(*) AS samples,
+                       COUNT(DISTINCT e.src) AS unique_sources,
+                       COUNT(DISTINCT e.service_id) AS services,
+                       COUNT(DISTINCT CASE WHEN g.country_code='CN' THEN e.src END) AS domestic_sources,
+                       COUNT(DISTINCT CASE WHEN g.country_code IS NOT NULL AND g.country_code<>'' AND g.country_code<>'CN'
+                                           THEN e.src END) AS foreign_sources
+                FROM guard_events e
+                LEFT JOIN geoip_cache g ON g.ip=e.src
+                WHERE e.ts>=? AND e.ts<=?
+            """ + filter_sql + """
+                GROUP BY e.public_port,e.proto
+                ORDER BY samples DESC,e.public_port,e.proto LIMIT 12
+            """, [since, now] + filter_params).fetchall()
         ]
         top_sources = [
             dict(row) for row in conn.execute("""
@@ -821,9 +850,10 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
                 FROM guard_events e
                 LEFT JOIN geoip_cache g ON g.ip=e.src
                 WHERE e.ts>=? AND e.ts<=?
+            """ + filter_sql + """
                 GROUP BY e.src,g.country_code,g.country_name,g.asn,g.asn_org
                 ORDER BY samples DESC,e.src LIMIT 12
-            """, (since, now)).fetchall()
+            """, [since, now] + filter_params).fetchall()
         ]
         events = [
             dict(row) for row in conn.execute("""
@@ -836,14 +866,17 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
                 LEFT JOIN guard_services s ON s.service_id=e.service_id
                 LEFT JOIN geoip_cache g ON g.ip=e.src
                 WHERE e.ts>=? AND e.ts<=?
+            """ + filter_sql + """
                 ORDER BY e.ts DESC LIMIT 60
-            """, (since, now)).fetchall()
+            """, [since, now] + filter_params).fetchall()
         ]
         bucket_counts = dict(conn.execute("""
-            SELECT CAST(ts / ? AS INTEGER) AS bucket_index,COUNT(*)
-            FROM guard_events WHERE ts>=? AND ts<=?
-            GROUP BY CAST(ts / ? AS INTEGER)
-        """, (bucket, since, now, bucket)).fetchall())
+            SELECT CAST(e.ts / ? AS INTEGER) AS bucket_index,COUNT(*)
+            FROM guard_events e
+            WHERE e.ts>=? AND e.ts<=?
+        """ + filter_sql + """
+            GROUP BY CAST(e.ts / ? AS INTEGER)
+        """, [bucket, since, now] + filter_params + [bucket]).fetchall())
         first_bucket = since // bucket
         trend = [
             {"time": index * bucket, "samples": bucket_counts.get(index, 0)}
@@ -852,6 +885,7 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
         return {
             "period": period,
             "period_label": PERIODS[period]["label"],
+            "selected_public_port": public_port,
             "from_ts": since,
             "to_ts": now,
             "bucket_seconds": bucket,
@@ -869,7 +903,8 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
             "events": events,
             "trend": trend,
             "disclaimer": (
-                "仅采集命中 GeoWAN geo_cn4/geo_cn6 前缀集合的 WAN DNAT 新建流量。"
+                "采集 WAN DNAT 新建流量，包含国内和海外来源；国家/地区仅作归属背景，不代表可信或恶意判定。"
+                "采集点位于现有 GeoWAN 国家过滤之前，样本可能随后被 GeoWAN 或 fw4 规则丢弃，不代表服务连接成功。"
                 "事件来自限速内核日志样本，不代表完整连接数；nft counter 与日志样本是不同口径。"
                 "当前为观察模式，不会执行 ACCEPT、DROP、REJECT 或自动封禁。"
             )
