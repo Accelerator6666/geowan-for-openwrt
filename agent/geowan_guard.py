@@ -283,11 +283,14 @@ def _service_id(item):
 
 
 def _classify(name, dest_port):
-    """Classify from explicit redirect/service naming; ports alone are not proof."""
+    """Classify by service naming and translated destination-port candidates."""
     label = (name or "").lower()
-    if any(word in label for word in ("rdp", "remote-desktop", "remote desktop")):
+    # Match the LAN-side target port: the WAN port may be deliberately remapped.
+    if dest_port == 3389 or any(
+        word in label for word in ("rdp", "remote-desktop", "remote desktop")
+    ):
         return "management", "远程桌面 / RDP"
-    if "vnc" in label:
+    if "vnc" in label or dest_port == 5900:
         return "management", "远程控制 / VNC"
     if "pve" in label or "proxmox" in label:
         return "management", "虚拟化管理"
@@ -295,8 +298,10 @@ def _classify(name, dest_port):
         return "management", "备份管理"
     if any(word in label for word in ("dsm", "synology", "nas-admin")):
         return "management", "NAS 管理"
-    if "syn" in label and dest_port in (5000, 5001, 5006):
-        return "management", "NAS 管理（名称/端口候选）"
+    if dest_port in (5000, 5001):
+        return "management", "DSM 管理端口候选"
+    if "syn" in label and dest_port in (5005, 5006, 6690):
+        return "application", "群晖文件服务端口候选"
     if any(word in label for word in ("vpn", "ssl", "forti")):
         return "remote_access", "VPN / 远程接入"
     if "jump" in label:
