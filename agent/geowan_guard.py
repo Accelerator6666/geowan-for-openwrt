@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """GeoWAN Sensitive Port Guard: local DNAT inventory and observation-only telemetry.
 
-The Guard owns one additional base chain in inet fw4. Its rules only count and
-rate-limited-log new DNAT flows from the existing GeoWAN CN prefix sets. They
-never accept, drop, reject, mark, or alter an existing firewall decision.
+The Guard owns one additional base chain in inet fw4. Its rules count and
+rate-limited-log new WAN DNAT flows before the existing GeoWAN country filter.
+They never accept, drop, reject, mark, or alter an existing firewall decision.
 """
 import hashlib
 import ipaddress
