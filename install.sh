@@ -157,6 +157,19 @@ assert data.get("error") == "invalid_period", data
     exit 1
 }
 
+RPC_BAD_GUARD_PORT="$(printf '%s' '{"period":"24h","public_port":70000}' | /usr/bin/python3 "$BASE/rpcd/geowan" call guard_overview)" || {
+    echo "rpcd Guard port filter self-test failed; installation stopped."
+    exit 1
+}
+printf '%s' "$RPC_BAD_GUARD_PORT" | /usr/bin/python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+assert data.get("error") == "invalid_port", data
+' || {
+    echo "rpcd Guard port filter validation response invalid; installation stopped."
+    exit 1
+}
+
 echo "rpcd plugin self-tests passed."
 
 # Stop an existing v0.2 monitor before replacing its executable or service file.
