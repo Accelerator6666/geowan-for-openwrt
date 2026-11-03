@@ -7,6 +7,7 @@ from pathlib import Path
 
 from geowan_geoip import GeoIPResolver, read_metadata
 from geowan_profile import source_profile, asn_profile, correlations
+from geowan_guard import guard_overview
 
 DB = Path("/etc/geowan-console/telemetry.sqlite3")
 SORTS = {
@@ -454,4 +455,6 @@ def dispatch(method, request):
         return asn_profile(request)
     if method == "correlations":
         return correlations(request)
+    if method == "guard_overview":
+        return guard_overview(request)
     return {"error": "unknown_method"}
