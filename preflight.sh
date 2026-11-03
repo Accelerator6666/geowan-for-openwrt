@@ -85,6 +85,27 @@ if nft list chain inet fw4 dstnat_wan 2>/dev/null; then
 else
     fail "runtime WAN DNAT chain unavailable"
 fi
+
+echo
+echo "===== GUARD NFT SYNTAX CHECK (NO APPLY) ====="
+if /usr/bin/python3 - "$BASE" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "agent"))
+from geowan_guard import validate_guard_rules
+result = validate_guard_rules()
+print("WAN device:", result["wan_device"])
+print("Services:", result["service_count"])
+print("Active:", result["active_service_count"])
+print("Conflicts:", result["conflict_count"])
+print("Observation rules:", result["rule_count"])
+print("nft -c syntax check: PASS (no rules applied)")
+PY
+then
+    pass "Sensitive Port Guard nft syntax"
+else
+    fail "Sensitive Port Guard nft syntax"
+fi
 echo
 echo "===== GUARD CHAIN (READ ONLY) ====="
 if nft list chain inet fw4 geo_guard_forward 2>/dev/null; then
