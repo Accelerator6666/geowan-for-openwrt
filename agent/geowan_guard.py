@@ -123,6 +123,26 @@ def ensure_guard_schema(conn):
             ON guard_events(public_port, ts);
         CREATE INDEX IF NOT EXISTS idx_guard_events_service_ts
             ON guard_events(service_id, ts);
+        CREATE TABLE IF NOT EXISTS guard_alerts(
+            alert_id TEXT PRIMARY KEY,
+            rule_id TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'notice',
+            src TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            last_alert_at INTEGER NOT NULL,
+            window_start INTEGER NOT NULL,
+            window_seconds INTEGER NOT NULL,
+            sample_count INTEGER NOT NULL,
+            unique_public_ports INTEGER NOT NULL,
+            public_ports TEXT NOT NULL DEFAULT '[]',
+            occurrence_count INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_guard_alerts_last_seen
+            ON guard_alerts(last_seen DESC);
+        CREATE INDEX IF NOT EXISTS idx_guard_alerts_src_rule
+            ON guard_alerts(src,rule_id);
         CREATE TABLE IF NOT EXISTS guard_state(
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
@@ -904,6 +924,19 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
                 ORDER BY e.ts DESC LIMIT 60
             """, [since, now] + filter_params).fetchall()
         ]
+        alerts = [
+            dict(row) for row in conn.execute("""
+                SELECT a.alert_id,a.rule_id,a.severity,a.src,a.created_at,
+                       a.first_seen,a.last_seen,a.last_alert_at,a.window_start,
+                       a.window_seconds,a.sample_count,a.unique_public_ports,
+                       a.public_ports,a.occurrence_count,
+                       g.country_code,g.country_name,g.region,g.city,g.asn,g.asn_org
+                FROM guard_alerts a
+                LEFT JOIN geoip_cache g ON g.ip=a.src
+                WHERE a.last_seen>=? AND a.last_seen<=?
+                ORDER BY a.last_seen DESC LIMIT 50
+            """, (since, now)).fetchall()
+        ]
         bucket_counts = dict(conn.execute("""
             SELECT CAST(e.ts / ? AS INTEGER) AS bucket_index,COUNT(*)
             FROM guard_events e
@@ -935,6 +968,7 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
             "top_ports": top_ports,
             "top_sources": top_sources,
             "events": events,
+            "alerts": alerts,
             "trend": trend,
             "disclaimer": (
                 "采集 WAN DNAT 新建流量，包含国内和海外来源；国家/地区仅作归属背景，不代表可信或恶意判定。"

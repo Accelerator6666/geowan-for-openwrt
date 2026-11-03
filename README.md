@@ -133,3 +133,18 @@ v0.5.1 回归测试使用已在目标路由器只读核对的案例：`112.82.23
 ## 独立仓库说明
 
 此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的旧稳定基线；`develop-v0.5.0`、`develop-v0.5.1` 保留对应开发预览；`develop-v0.6.0` 增加 Sensitive Port Guard，尚未完成目标设备验收。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
+
+
+## v0.6.1 Alert-only 预览
+
+v0.6.1 在 v0.6.0 Sensitive Port Guard 之上增加独立的行为观察告警，不改变现有防火墙决策。
+
+- 默认规则：同一公网来源 IP 在 10 分钟内访问至少 3 个不同的、当前有效且无映射冲突的公网 DNAT 端口，并且至少产生 3 条 Guard 日志样本时，生成一条“多公网端口访问线索”。
+- 同一来源、同一规则使用稳定记录；15 分钟冷却期内只更新最近观察值，不重复增加告警周期。
+- 告警记录保留 30 天，最多 50,000 条；GeoIP 国家、城市、ASN 在读取时从现有本地缓存关联。
+- LuCI Guard 面板显示最近命中时间、来源 IP、国家、ASN、涉及的公网端口、窗口样本数和告警周期。
+- 告警只代表需要人工复核的网络观察线索。日志受限速影响，样本不是完整连接数；正常用户访问多个公开服务也可能触发。
+- 国家、城市、ASN 和网络组织不参与告警阈值或恶意判定。
+- 本版本不执行 nftables 命令，不创建封禁集合，不改变 ACCEPT / DROP / REJECT、DNAT、现有 GeoWAN 黑名单或端口映射。
+
+安装器首次安装时会在本地策略文件不存在的情况下，将 guard-alert-policy.example.json 安装为 /etc/geowan-console/guard-alert-policy.json，并设置 0600 权限；已有本地策略会保留。缺少该文件时程序仍使用内置默认值，文件格式无效时自动停用告警计算。

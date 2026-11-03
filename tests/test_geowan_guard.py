@@ -308,7 +308,7 @@ config redirect 'rdp-other'
             conn.execute("""
                 CREATE TABLE geoip_cache(
                     ip TEXT PRIMARY KEY,country_code TEXT,country_name TEXT,
-                    asn INTEGER,asn_org TEXT
+                    region TEXT,city TEXT,asn INTEGER,asn_org TEXT
                 )
             """)
             now = 1800000000
@@ -329,8 +329,9 @@ config redirect 'rdp-other'
                  "10.0.0.193", 3389, "abcdef123456", "kernel_log_sample")
             )
             conn.execute(
-                "INSERT INTO geoip_cache VALUES(?,?,?,?,?)",
-                ("8.8.8.8", "US", "美国", 15169, "Google LLC")
+                "INSERT INTO geoip_cache VALUES(?,?,?,?,?,?,?)",
+                ("8.8.8.8", "US", "美国", "California",
+                 "Mountain View", 15169, "Google LLC")
             )
             conn.execute(
                 "INSERT INTO guard_state VALUES(?,?,?)",

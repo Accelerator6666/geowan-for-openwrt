@@ -23,6 +23,7 @@ from geowan_guard import (
     ensure_guard_schema, refresh_guard, insert_guard_log_samples,
     enrich_guard_sources
 )
+from geowan_alerts import evaluate_guard_alerts
 
 DB = Path(os.environ.get("GEOWAN_DB", "/etc/geowan-console/telemetry.sqlite3"))
 STATUS = Path(os.environ.get("GEOWAN_STATUS", "/tmp/geowan-console/status.json"))
@@ -427,6 +428,7 @@ def monitor_cycle(state, conn):
                     conn, resolver, now, limit=100
                 )
             state["last_log_mono"] = mono
+            state["guard_alert_summary"] = evaluate_guard_alerts(conn, now)
         resolver = state.get("geoip_resolver")
         if resolver and resolver.available and mono - state["last_geoip_mono"] >= 15:
             state["geoip_enriched"] = enrich_pending(conn, resolver, now, limit=250)
@@ -445,6 +447,7 @@ def monitor_cycle(state, conn):
         }
         status["guard"] = state.get("guard_runtime", {})
         status["guard_samples_inserted_last_cycle"] = state.get("guard_samples_inserted", 0)
+        status["guard_alerts"] = state.get("guard_alert_summary", {})
         publish_status(status)
         return True
     finally:
@@ -468,6 +471,7 @@ def monitor():
         "guard_runtime": {},
         "guard_samples_inserted": 0,
         "guard_geoip_enriched": 0,
+        "guard_alert_summary": {},
         "geoip_resolver": GeoIPResolver()
     }
     stopping = False
@@ -511,10 +515,12 @@ def collect():
         guard_runtime = refresh_guard(conn, now)
         guard_samples = insert_guard_log_samples(conn, now, boot_id())
         enrich_guard_sources(conn, resolver, now, limit=100)
+        guard_alert_summary = evaluate_guard_alerts(conn, now)
         cleanup_geoip_cache(conn, now)
     status = build_status(conn, now, sizes, errors)
     status["guard"] = guard_runtime
     status["guard_samples_inserted_last_cycle"] = guard_samples
+    status["guard_alerts"] = guard_alert_summary
     resolver.close()
     status["collector"] = {
         "mode": "reconcile",

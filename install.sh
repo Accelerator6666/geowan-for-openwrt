@@ -2,7 +2,10 @@
 # Install the companion dashboard; existing GeoWAN / DNAT rules untouched.
 set -eu
 BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-[ -f "$BASE/agent/geowan_agent.py" ] || { echo "Run from project directory"; exit 1; }
+[ -f "$BASE/agent/geowan_agent.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] || {
+    echo "Run from the complete GeoWAN v0.6.1 project directory"
+    exit 1
+}
 [ -x /sbin/fw4 ] || { echo "OpenWrt firewall4 required"; exit 1; }
 [ -x /usr/bin/python3 ] || {
     echo "Python3 required. For OpenWrt 25.12 use: apk update && apk add python3 python3-sqlite3"
@@ -12,6 +15,12 @@ BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
     echo "Missing Python SQLite module. Install python3-sqlite3."
     exit 1
 }
+if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts'; then
+    :
+else
+    echo "GeoWAN monitor/alert module import failed; installation stopped."
+    exit 1
+fi
 [ -d /usr/share/luci/menu.d ] || { echo "LuCI is required"; exit 1; }
 [ -d /usr/share/rpcd/acl.d ] || { echo "rpcd is required"; exit 1; }
 
@@ -209,10 +218,17 @@ EOF
 fi
 chmod 600 /etc/geowan-console/guard.json
 
+# Install the alert-only policy template only when no local policy exists.
+if [ ! -f /etc/geowan-console/guard-alert-policy.json ]; then
+    cp "$BASE/guard-alert-policy.example.json" /etc/geowan-console/guard-alert-policy.json
+fi
+chmod 600 /etc/geowan-console/guard-alert-policy.json
+
 cp "$BASE/agent/geowan_agent.py" /usr/libexec/geowan-console/agent.py
 cp "$BASE/agent/geowan_geoip.py" /usr/libexec/geowan-console/geowan_geoip.py
 cp "$BASE/agent/geowan_profile.py" /usr/libexec/geowan-console/geowan_profile.py
 cp "$BASE/agent/geowan_guard.py" /usr/libexec/geowan-console/geowan_guard.py
+cp "$BASE/agent/geowan_alerts.py" /usr/libexec/geowan-console/geowan_alerts.py
 cp "$BASE/agent/geowan_rpc.py" /usr/libexec/geowan-console/geowan_rpc.py
 cp "$BASE/rpcd/geowan" /usr/libexec/rpcd/geowan
 cp "$BASE/scripts/task.sh" /usr/libexec/geowan-console/task.sh
@@ -225,6 +241,7 @@ cp "$BASE/luci/geowan.css" /www/luci-static/resources/geowan/geowan.css
 cp "$BASE/luci/menu.json" /usr/share/luci/menu.d/luci-app-geowan-console.json
 cp "$BASE/luci/acl.json" /usr/share/rpcd/acl.d/luci-app-geowan-console.json
 
+chmod 644 /usr/libexec/geowan-console/geowan_alerts.py
 chmod 700 /usr/libexec/geowan-console/agent.py \
     /usr/libexec/geowan-console/task.sh \
     /usr/libexec/geowan-console/update.sh \

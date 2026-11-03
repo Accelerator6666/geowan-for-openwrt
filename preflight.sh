@@ -16,11 +16,16 @@ fw4 -V 2>&1 | head -n 2 || true
 
 echo
 echo "===== SOURCE CHECKOUT ====="
-if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ]; then
+if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ] && [ -f "$BASE/guard-alert-policy.example.json" ]; then
     if /usr/bin/python3 -m py_compile "$BASE"/agent/*.py "$BASE/rpcd/geowan"; then
         pass "GeoWAN Python source syntax"
     else
         fail "GeoWAN Python source syntax"
+    fi
+    if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts'; then
+        pass "GeoWAN alert module import"
+    else
+        fail "GeoWAN alert module import"
     fi
     if "$BASE/rpcd/geowan" list | /usr/bin/python3 -c '
 import json,sys

@@ -958,6 +958,7 @@ function guardPanel() {
         var config = data.config || {};
         var inventory = data.inventory || [];
         var events = data.events || [];
+        var alerts = data.alerts || [];
         var selectedPort = String(data.selected_public_port || '0');
         var portOptions = [E('option', { 'value': '0' }, '全部公网端口')];
         var seenPorts = {};
@@ -1027,6 +1028,26 @@ function guardPanel() {
             ];
         });
 
+        var alertRows = alerts.map(function(item) {
+            var ports = [];
+            try {
+                ports = JSON.parse(item.public_ports || '[]');
+            } catch (error) {
+                ports = [];
+            }
+            return [
+                timeString(item.last_seen), item.src,
+                item.country_name || item.country_code || 'GeoIP 未识别',
+                item.asn ? ('AS' + item.asn + ' ' + (item.asn_org || '')) : '—',
+                ports.join(', ') || '—',
+                item.sample_count || 0,
+                item.occurrence_count || 1
+            ];
+        });
+        if (!alertRows.length) {
+            alertRows = [['—', '—', '—', '—', '暂无告警线索', '—', '—']];
+        }
+
         dom.content(result, [
             E('div', { 'class': 'gw-guard-status ' + stateClass }, [
                 E('strong', {}, stateText),
@@ -1041,6 +1062,16 @@ function guardPanel() {
                 card('命中服务数', totals.unique_services || 0, '当前统计范围'),
                 card('公网端口数', totals.unique_public_ports || 0, '当前统计范围')
             ]),
+            E('h4', {}, '多公网端口访问线索（告警模式，仅观察）'),
+            table(
+                ['最近命中', '来源 IP', 'GeoIP 国家', 'ASN / 网络组织',
+                    '访问公网端口', '窗口样本', '告警周期'],
+                alertRows
+            ),
+            E('p', { 'class': 'gw-muted' },
+                '默认规则：同一来源在 10 分钟内访问至少 3 个不同公网端口时生成观察告警。'
+                + '告警基于限速日志样本，不代表完整连接数或已确认攻击；国家、城市和 ASN 仅作背景信息。'
+                + '告警列表是跨端口关联结果，不随上方单端口筛选变化；不会执行封禁或修改防火墙。'),
             E('h4', {}, '公网 DNAT 服务资产（最多 100 项）'),
             table(
                 ['地址族', '协议', '公网端口', '服务名称', '分类', '内网目标', '状态'],
