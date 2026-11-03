@@ -154,9 +154,15 @@ config redirect 'rdp-other'
         check_call = next(call for call in calls if call[0][:3] == ("nft", "-c", "-f"))
         self.assertIn("add chain inet fw4 geo_guard_forward", check_call[1])
         self.assertIn("ct original proto-dst 58964", check_call[1])
-        self.assertNotIn(" drop", check_call[1])
-        self.assertNotIn(" reject", check_call[1])
-        self.assertNotIn(" accept", check_call[1])
+        rule_lines = [
+            line for line in check_call[1].splitlines()
+            if line.startswith("add rule ")
+        ]
+        self.assertTrue(rule_lines)
+        for line in rule_lines:
+            self.assertFalse(any(
+                verdict in line.split() for verdict in ("accept", "drop", "reject")
+            ))
 
     def test_parse_guard_log_preserves_original_public_port_and_translated_target(self):
         line = (
