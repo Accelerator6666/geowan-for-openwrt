@@ -19,6 +19,10 @@ import tempfile
 import time
 
 from geowan_geoip import GEOIP_DIR, GeoIPResolver, read_metadata
+from geowan_guard import (
+    ensure_guard_schema, refresh_guard, insert_guard_log_samples,
+    enrich_guard_sources
+)
 
 DB = Path(os.environ.get("GEOWAN_DB", "/etc/geowan-console/telemetry.sqlite3"))
 STATUS = Path(os.environ.get("GEOWAN_STATUS", "/tmp/geowan-console/status.json"))
@@ -73,6 +77,7 @@ def db_open():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_geoip_asn ON geoip_cache(asn)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_geoip_updated ON geoip_cache(updated_at)")
     conn.commit()
+    ensure_guard_schema(conn)
     return conn
 
 
@@ -407,10 +412,17 @@ def monitor_cycle(state, conn):
             sizes, errors = snapshot_incremental(conn, now)
             state["sizes"] = sizes
             state["errors"] = errors
+            state["guard_runtime"] = refresh_guard(conn, now)
             state["last_inventory"] = now
             state["last_inventory_mono"] = mono
         if state["last_log_mono"] == 0 or mono - state["last_log_mono"] >= LOG_SCAN_INTERVAL:
             insert_log_samples(conn, now)
+            state["guard_samples_inserted"] = insert_guard_log_samples(conn, now, boot_id())
+            resolver = state.get("geoip_resolver")
+            if resolver and resolver.available:
+                state["guard_geoip_enriched"] = enrich_guard_sources(
+                    conn, resolver, now, limit=100
+                )
             state["last_log_mono"] = mono
         resolver = state.get("geoip_resolver")
         if resolver and resolver.available and mono - state["last_geoip_mono"] >= 15:
@@ -428,6 +440,8 @@ def monitor_cycle(state, conn):
             "log_scan_interval_seconds": LOG_SCAN_INTERVAL,
             "last_inventory": state["last_inventory"]
         }
+        status["guard"] = state.get("guard_runtime", {})
+        status["guard_samples_inserted_last_cycle"] = state.get("guard_samples_inserted", 0)
         publish_status(status)
         return True
     finally:
@@ -448,6 +462,9 @@ def monitor():
         "last_geoip_mono": 0.0,
         "last_geoip_cleanup_mono": 0.0,
         "geoip_enriched": 0,
+        "guard_runtime": {},
+        "guard_samples_inserted": 0,
+        "guard_geoip_enriched": 0,
         "geoip_resolver": GeoIPResolver()
     }
     stopping = False
@@ -488,8 +505,13 @@ def collect():
         sizes, errors = snapshot(conn, now)
         insert_log_samples(conn, now)
         enrich_pending(conn, resolver, now, limit=250)
+        guard_runtime = refresh_guard(conn, now)
+        guard_samples = insert_guard_log_samples(conn, now, boot_id())
+        enrich_guard_sources(conn, resolver, now, limit=100)
         cleanup_geoip_cache(conn, now)
     status = build_status(conn, now, sizes, errors)
+    status["guard"] = guard_runtime
+    status["guard_samples_inserted_last_cycle"] = guard_samples
     resolver.close()
     status["collector"] = {
         "mode": "reconcile",
@@ -544,7 +566,7 @@ def build_status(conn, now, sizes, errors):
         "SELECT (ts/3600)*3600, COUNT(*) FROM events WHERE ts >= ? GROUP BY (ts/3600)",
         (bucket_start,)))
     return {
-        "version": "0.5.1", "updated": now, "status": "degraded" if errors else "ok",
+        "version": "0.6.0", "updated": now, "status": "degraded" if errors else "ok",
         "errors": errors, "set_sizes": sizes, "counters": read_counters(),
         "active_bans": active, "samples_24h": total, "top_sources": top_ip,
         "top_ports": top_port, "events": events, "blacklist": banned,
