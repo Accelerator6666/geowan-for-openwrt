@@ -492,7 +492,7 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
                 services, wan, config["log_rate_per_second"], config["log_burst"]
             )
             rules_fingerprint = hashlib.sha256(
-                "\\n".join(desired_rules).encode("utf-8")
+                "\n".join(desired_rules).encode("utf-8")
             ).hexdigest()
             exists = _chain_exists(runner)
             if not exists or previous_state.get("rules_fingerprint") != rules_fingerprint:
@@ -512,8 +512,7 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
             rules_fingerprint = ""
             mode = "disabled"
 
-        conn.execute("UPDATE guard_services SET runtime_active=0,conflict=0,updated_at=?",
-                     (now,))
+        conn.execute("UPDATE guard_services SET runtime_active=0,conflict=0")
         for item in services:
             conn.execute("""
                 INSERT INTO guard_services(
@@ -539,6 +538,10 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
                 int(item["config_match"]), item["fingerprint"],
                 now if item["runtime_active"] else 0, now
             ))
+        conn.execute(
+            "DELETE FROM guard_services WHERE runtime_active=0 AND updated_at<?",
+            (now - 90 * 86400,)
+        )
         state = {
             "enabled": bool(config["enabled"] and mode == "observe"),
             "mode": mode,
