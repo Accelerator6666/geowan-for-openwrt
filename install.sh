@@ -144,6 +144,19 @@ assert data.get("error") == "invalid_period", data
     exit 1
 }
 
+RPC_BAD_GUARD="$(printf '%s' '{"period":"all"}' | /usr/bin/python3 "$BASE/rpcd/geowan" call guard_overview)" || {
+    echo "rpcd Guard overview self-test failed; installation stopped."
+    exit 1
+}
+printf '%s' "$RPC_BAD_GUARD" | /usr/bin/python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+assert data.get("error") == "invalid_period", data
+' || {
+    echo "rpcd Guard overview validation response invalid; installation stopped."
+    exit 1
+}
+
 echo "rpcd plugin self-tests passed."
 
 # Stop an existing v0.2 monitor before replacing its executable or service file.
