@@ -84,7 +84,7 @@ config redirect 'rdp-other'
         option src_dport '58964'
         option dest_ip '10.0.0.212'
         option dest_port '3389'
-        option proto 'tcp'
+        option proto 'tcp udp'
 """
         rows = guard.build_inventory(conflicting, NFT, now=1800000000)
         rdp = [row for row in rows if row["public_port"] == 58964 and row["proto"] == "tcp"]
