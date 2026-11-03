@@ -16,7 +16,7 @@ fw4 -V 2>&1 | head -n 2 || true
 
 echo
 echo "===== SOURCE CHECKOUT ====="
-if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ]; then
+if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ]; then
     if /usr/bin/python3 -m py_compile "$BASE"/agent/*.py "$BASE/rpcd/geowan"; then
         pass "GeoWAN Python source syntax"
     else
@@ -25,7 +25,7 @@ if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ];
     if "$BASE/rpcd/geowan" list | /usr/bin/python3 -c '
 import json,sys
 d=json.load(sys.stdin)
-required={"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations"}
+required={"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations","guard_overview"}
 assert set(d)==required, d
 '; then
         pass "rpcd read-only method schemas"
@@ -78,6 +78,20 @@ for name in geo_black4 geo_black6; do
     echo
 done
 
+echo
+echo "===== ACTIVE WAN DNAT INVENTORY SOURCE (READ ONLY) ====="
+if nft list chain inet fw4 dstnat_wan 2>/dev/null; then
+    pass "runtime WAN DNAT chain readable"
+else
+    fail "runtime WAN DNAT chain unavailable"
+fi
+echo
+echo "===== GUARD CHAIN (READ ONLY) ====="
+if nft list chain inet fw4 geo_guard_forward 2>/dev/null; then
+    pass "Guard observation chain already present"
+else
+    warn "Guard observation chain not installed yet"
+fi
 echo
 echo "===== ACTIVE GEO FILTER ====="
 nft -a list chain inet fw4 geo_filter 2>&1 | sed -n '1,24p'
