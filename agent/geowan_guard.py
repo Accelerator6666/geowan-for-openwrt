@@ -22,6 +22,7 @@ GUARD_CONFIG = Path(os.environ.get(
 ))
 GUARD_CHAIN = "geo_guard_forward"
 GUARD_RETENTION = 30 * 86400
+GUARD_MAX_EVENTS = 200000
 GUARD_LOG_MARKER = re.compile(
     r"\bGEOWAN_GUARD([46])\|([a-f0-9]{12})\|([0-9]{1,5})\|"
 )
@@ -727,6 +728,13 @@ def insert_guard_log_samples(conn, now=None, lines=None, boot="unknown-boot",
         ))
         inserted += max(0, cursor.rowcount)
     conn.execute("DELETE FROM guard_events WHERE ts < ?", (now - GUARD_RETENTION,))
+    conn.execute("""
+        DELETE FROM guard_events
+        WHERE id IN (
+            SELECT id FROM guard_events
+            ORDER BY ts DESC,id DESC LIMIT -1 OFFSET ?
+        )
+    """, (GUARD_MAX_EVENTS,))
     return inserted
 
 
