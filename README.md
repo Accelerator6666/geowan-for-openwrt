@@ -1,9 +1,9 @@
-# GeoWAN for OpenWrt — GeoWAN Console v0.5.1（开发预览）
+# GeoWAN for OpenWrt — GeoWAN Console v0.6.0（开发预览）
 
 为 **OpenWrt 25.12 / firewall4 / nftables** 设计的独立 GeoIP 防护可视化和持久化伴侣，中文 LuCI 页面，无额外监听端口。
 
-> **状态：v0.5.1 开发预览；尚未在目标路由器完成 v0.5.1 实机验收。请先备份再部署。**
-> 该组件只观测已经存在的 GeoWAN nftables 规则，不会修改 WAN 防火墙策略、DNAT、PPPoE、daed 或代理分流。
+> **状态：v0.6.0 开发预览；Sensitive Port Guard 尚未完成目标路由器实机验收。请先备份，按只读预检和分阶段测试流程部署。**
+> 原有 GeoWAN GeoIP 过滤与 DNAT 保持不变。v0.6.0 新增独立的 log/counter-only 观察链 `geo_guard_forward`，不改变 ACCEPT/DROP/REJECT 决策，不启用自动封禁。
 
 ## 功能
 
@@ -11,10 +11,12 @@
 - SQLite 持久保存被封锁 IP 和最近 30 天的**采样**内核日志；v0.2 快速监控每 5 秒采样计数器、每 15 秒盘点动态集合和扫描日志；每 5 分钟保留一次恢复/全量对账任务。
 - GeoIP 数据库更新脚本已提供，但**不会自动排程**：首次下载需要手动执行并验证，后续月度自动更新将在单独验收后启用。它只更新离线 MMDB 文件，不修改 nftables 或 CN 前缀集合。
 - IPv4/IPv6 分别维护统计；前端只读，走现有 LuCI/rpcd 身份验证和单一状态 JSON 文件；LuCI 每 5 秒刷新。
+- v0.6.0 Guard 额外要求可读取 `uci export firewall`、`nft list chain inet fw4 dstnat_wan` 和 `ubus network.interface.wan status`；使用本机 `geo_cn4/geo_cn6` 集合，不调用公网 API。Guard 配置保存在 `/etc/geowan-console/guard.json`，默认 `enabled=true`、`mode=observe`、每服务每秒最多 2 条日志、burst 10。
 - 可选离线 DB-IP Lite MMDB 归属查询：国家、洲、地区/城市、ASN 和网络组织；数据在本机查询，不调用逐 IP 公网 API。
 - LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
 - v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
 - v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。v0.5.1 修复滚动窗口导致的时间桶漂移，统一使用固定 UTC Unix epoch 时间边界；关联簇增加国家/地区、ASN 数量及分布，并返回最多 100 个来源 IP 的明细；来源列表或超过 50 项的国家 / ASN 分布会明确标记截断。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
+- v0.6.0 新增 Sensitive Port Guard：从本机 UCI redirect 与运行时 `dstnat_wan` 交叉发现公网服务，识别地址族、TCP/UDP、公网原始端口、DNAT 后端和映射冲突；通过独立 `geo_guard_forward` 链观察 `geo_cn4/geo_cn6` 国内来源访问公网 DNAT 服务的 NEW/DNAT 流量，按公网原始端口归属，保存独立 `guard_events` 样本，并提供服务资产、端口排行、来源排行和最近事件 LuCI 面板。默认仅观察，日志限速，样本不是完整连接数；冲突映射不生成采集规则。
 - 不在 LAN/WAN 开放新端口，不将日志发布到公网，不需要 Node/npm、Docker 或独立 Web 服务。
 
 ## 运行要求
@@ -45,7 +47,7 @@
     apk update
     apk add python3 python3-sqlite3 python3-maxminddb git
     cd /root
-    git clone --depth 1 --branch develop-v0.5.1 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
+    git clone --depth 1 --branch develop-v0.6.0 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
     cd /root/geowan-source
     sh preflight.sh
     sh install.sh
@@ -83,6 +85,8 @@
 1. 不要把 LuCI 面板或状态文件直接暴露公网。仅通过 LAN 或 VPN 管理。
 2. RDP、SSL VPN、JumpServer 的端口映射由现有防火墙配置管理；本项目不改动。
 3. SQLite 包含来源 IP、时间、目的 IP/端口等敏感运维日志，不要上传公开 GitHub。
+4. v0.6.0 Guard 只在 `inet fw4` 中创建独立的 `geo_guard_forward` base chain（forward priority -2），只对 `geo_cn4/geo_cn6` 命中且 `ct state new`、`ct status dnat` 的流量执行 counter 和限速 log；不向现有 `geo_wan_forward`/`geo_filter` 插入 jump，不修改现有链、集合、DNAT 或转发 verdict。若 WAN 设备无法识别、运行时 DNAT 链不可读或映射冲突，Guard 不应猜测或自动执行封禁。
+5. 卸载会在确认链的 hook/priority 符合 Guard 标识后删除 `geo_guard_forward`；`guard.json` 和 SQLite 数据保留。
 4. 黑名单恢复依赖已存在且未过期的 nft 动态集合；若规则缺失，会跳过并报告，不会建立替代防火墙。
 
 ## 卸载
@@ -126,4 +130,4 @@ v0.5.1 回归测试使用已在目标路由器只读核对的案例：`112.82.23
 
 ## 独立仓库说明
 
-此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的 v0.4.0；`develop-v0.5.0` 保留 v0.5.0 开发预览；`develop-v0.5.1` 是固定时间桶和跨 ASN / 国家关联增强分支，尚未完成目标设备验收。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
+此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的旧稳定基线；`develop-v0.5.0`、`develop-v0.5.1` 保留对应开发预览；`develop-v0.6.0` 增加 Sensitive Port Guard，尚未完成目标设备验收。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
