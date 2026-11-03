@@ -281,20 +281,30 @@ def _service_id(item):
 
 
 def _classify(name, dest_port):
+    """Classify from explicit redirect/service naming; ports alone are not proof."""
     label = (name or "").lower()
-    if dest_port == 3389 or "rdp" in label:
+    if any(word in label for word in ("rdp", "remote-desktop", "remote desktop")):
         return "management", "远程桌面 / RDP"
-    if dest_port == 5900 or "vnc" in label:
+    if "vnc" in label:
         return "management", "远程控制 / VNC"
-    if dest_port in (8006, 8007) or "pve" in label or "pbs" in label:
-        return "management", "虚拟化 / 备份管理"
-    if dest_port in (5000, 5001, 5006) or "dsm" in label or "nas-admin" in label:
+    if "pve" in label or "proxmox" in label:
+        return "management", "虚拟化管理"
+    if "pbs" in label or "proxmox-backup" in label:
+        return "management", "备份管理"
+    if any(word in label for word in ("dsm", "synology", "nas-admin")):
         return "management", "NAS 管理"
+    if "syn" in label and dest_port in (5000, 5001, 5006):
+        return "management", "NAS 管理（名称/端口候选）"
     if any(word in label for word in ("vpn", "ssl", "forti")):
         return "remote_access", "VPN / 远程接入"
     if "jump" in label:
         return "remote_access", "堡垒机 / 运维入口"
-    return "application", "公网应用"
+    if any(word in label for word in (
+        "emby", "jellyfin", "media", "home assistant", "webdav",
+        "stirling", "mumble", "usstock", "qb"
+    )):
+        return "application", "公网应用"
+    return "custom", "自定义 / 待确认"
 
 
 def build_inventory(uci_text, nft_text, now=None):
