@@ -40,7 +40,7 @@
     cd /root/geowan-source
     sh preflight.sh
 
-脚本只读取系统、nftables 对象、JSON 集合样本、日志和磁盘信息，并执行 fw4 check；**不会 reload 防火墙、修改 nftables、写数据库或执行 GeoIP 更新**。如输出 FAIL，先停止并排查，不要安装。
+脚本只读取系统、nftables 对象、JSON 集合样本、日志和磁盘信息，并执行 `fw4 check` 与 Guard 规则 `nft -c -f -` 语法预检；**不会 reload 防火墙、应用/修改 nftables 规则、写数据库或执行 GeoIP 更新**。如输出 FAIL，先停止并排查，不要安装。
 
 ## 安装（预检通过后）
 
