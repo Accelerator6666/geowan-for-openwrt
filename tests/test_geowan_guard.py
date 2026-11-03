@@ -75,7 +75,8 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(len(rdp), 2)
         self.assertTrue(all(row["runtime_active"] for row in rdp))
         self.assertTrue(all(row["config_match"] for row in rdp))
-        self.assertTrue(all(row["category"] == "management" for row in rdp))
+        self.assertTrue(all(row["category"] == "custom" for row in rdp))
+        self.assertTrue(all("待确认" in row["category_label"] for row in rdp))
         self.assertFalse(any(row["public_port"] == 5001 for row in rows))
 
     def test_conflicting_public_mapping_is_marked_and_not_rendered(self):
