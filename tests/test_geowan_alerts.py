@@ -386,6 +386,16 @@ class GuardAlertTests(unittest.TestCase):
             )
             self.assertEqual(high["selected_alert_severity"], "high")
 
+    def test_guard_overview_rejects_invalid_alert_filters(self):
+        self.assertEqual(
+            guard_overview({"period": "24h", "alert_rule": "not-a-rule"}),
+            {"error": "invalid_alert_rule"}
+        )
+        self.assertEqual(
+            guard_overview({"period": "24h", "alert_severity": "critical"}),
+            {"error": "invalid_alert_severity"}
+        )
+
     def test_guard_overview_returns_geoip_enriched_alerts(self):
         now = 1800000000
         with tempfile.TemporaryDirectory() as tmp:
