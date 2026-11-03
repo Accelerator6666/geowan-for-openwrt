@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "window_seconds": 600,
+  "min_distinct_public_ports": 3,
+  "min_samples": 3,
+  "cooldown_seconds": 900,
+  "retention_days": 30,
+  "max_alerts": 50000
+}
