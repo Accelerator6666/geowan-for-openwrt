@@ -195,6 +195,24 @@ config redirect 'rdp-other'
         self.assertIsNone(guard.parse_guard_log(private, now=1800000000))
         self.assertIsNone(guard.parse_guard_log(mismatch, now=1800000000))
 
+    def test_guard_event_storage_has_a_hard_row_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "db.sqlite")
+            guard.ensure_guard_schema(conn)
+            lines = [
+                "GEOWAN_GUARD4|abcdef123456|58964| SRC=8.8.8.8 "
+                "DST=10.0.0.193 PROTO=TCP SPT=%d DPT=3389" % port
+                for port in (50123, 50124, 50125)
+            ]
+            with mock.patch.object(guard, "GUARD_MAX_EVENTS", 2):
+                guard.insert_guard_log_samples(
+                    conn, now=1800000000, lines=lines, boot="boot-cap"
+                )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM guard_events").fetchone()[0], 2
+            )
+            conn.close()
+
     def test_guard_schema_is_separate_from_existing_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "db.sqlite"
