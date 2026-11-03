@@ -44,3 +44,17 @@
 .gw-correlation-detail h4{font-size:14px;margin:12px 0 8px}
 .gw-correlation-detail .gw-profile-columns{margin:8px 0}
 @media(max-width:600px){.gw-correlation-detail{padding:8px}.gw-correlation-detail>summary{font-size:13px}}
+
+
+/* v0.6.0 observation-only Sensitive Port Guard */
+.gw-guard-controls{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:8px 0 14px}
+.gw-guard-controls label{display:flex;flex-direction:column;gap:5px;min-width:180px;font-size:12px;color:#69778b}
+.gw-guard-controls select{min-height:36px}
+.gw-guard-result{min-height:28px}
+.gw-guard-result h4{font-size:14px;margin:16px 0 8px}
+.gw-guard-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;margin:8px 0 12px;font-size:13px}
+.gw-guard-state-ok{color:#176b4b;background:#e7f7ef;border:1px solid #bde8d0}
+.gw-guard-state-warn{color:#8b5700;background:#fff4dd;border:1px solid #f1d99e}
+.gw-guard-metrics{margin:10px 0}
+.gw-guard-result .gw-table{margin-bottom:8px}
+@media(max-width:600px){.gw-guard-controls{align-items:stretch}.gw-guard-controls label,.gw-guard-controls button{width:100%}.gw-guard-status{align-items:flex-start;flex-direction:column}}
