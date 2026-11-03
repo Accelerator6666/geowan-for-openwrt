@@ -134,7 +134,7 @@ class RpcLookupTests(unittest.TestCase):
         methods = json.loads(result.stdout)
         self.assertEqual(set(methods), {
             "lookup", "list_bans", "get_ban", "analytics",
-            "source_profile", "asn_profile", "correlations"
+            "source_profile", "asn_profile", "correlations", "guard_overview"
         })
         self.assertEqual(methods["lookup"], {"ip": ""})
         self.assertEqual(methods["get_ban"], {"ip": ""})
@@ -142,6 +142,7 @@ class RpcLookupTests(unittest.TestCase):
         self.assertEqual(methods["source_profile"], {"ip": "", "period": "24h"})
         self.assertEqual(methods["asn_profile"], {"asn": 15169, "period": "24h"})
         self.assertEqual(methods["correlations"], {"period": "24h"})
+        self.assertEqual(methods["guard_overview"], {"period": "24h"})
         self.assertEqual(methods["list_bans"]["page_size"], 50)
 
     def test_dispatch_routes_new_read_only_profile_methods(self):
@@ -165,6 +166,13 @@ class RpcLookupTests(unittest.TestCase):
                 {"clusters": []}
             )
             corr.assert_called_once_with({"period": "24h"})
+
+        with mock.patch.object(geowan_rpc, "guard_overview", return_value={"inventory": []}) as guard:
+            self.assertEqual(
+                geowan_rpc.dispatch("guard_overview", {"period": "24h"}),
+                {"inventory": []}
+            )
+            guard.assert_called_once_with({"period": "24h"})
 
     def test_rpcd_plugin_call_protocol(self):
         plugin = Path(__file__).resolve().parents[1] / "rpcd" / "geowan"
