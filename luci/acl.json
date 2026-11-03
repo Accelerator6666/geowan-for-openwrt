@@ -13,7 +13,8 @@
           "analytics",
           "source_profile",
           "asn_profile",
-          "correlations"
+          "correlations",
+          "guard_overview"
         ]
       },
       "file": {
