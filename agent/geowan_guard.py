@@ -21,6 +21,7 @@ GUARD_CONFIG = Path(os.environ.get(
     "GEOWAN_GUARD_CONFIG", "/etc/geowan-console/guard.json"
 ))
 GUARD_CHAIN = "geo_guard_forward"
+GUARD_CHAIN_COMMENT = "GeoWAN Sensitive Port Guard v0.6.0"
 GUARD_RETENTION = 30 * 86400
 GUARD_MAX_EVENTS = 200000
 GUARD_LOG_MARKER = re.compile(
@@ -427,7 +428,8 @@ def _chain_exists(command_runner=None):
     try:
         output = runner("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
         if ("type filter" not in output or "hook forward" not in output or
-                "priority -2" not in output or "policy accept" not in output):
+                "priority -2" not in output or "policy accept" not in output or
+                ('comment "%s"' % GUARD_CHAIN_COMMENT) not in output):
             raise RuntimeError("guard_chain_name_conflict")
         return True
     except subprocess.CalledProcessError:
@@ -450,7 +452,9 @@ def apply_rules(services, wan_device, config, chain_exists=None,
     else:
         lines.append(
             "add chain inet fw4 %s { type filter hook forward priority -2; "
-            "policy accept; }" % GUARD_CHAIN
+            "policy accept; comment %s; }" % (
+                GUARD_CHAIN, json.dumps(GUARD_CHAIN_COMMENT)
+            )
         )
     lines.extend(render_rules(
         services, wan_device,
@@ -495,7 +499,9 @@ def validate_guard_rules(command_runner=None):
     else:
         lines.append(
             "add chain inet fw4 %s { type filter hook forward priority -2; "
-            "policy accept; }" % GUARD_CHAIN
+            "policy accept; comment %s; }" % (
+                GUARD_CHAIN, json.dumps(GUARD_CHAIN_COMMENT)
+            )
         )
     rules = render_rules(
         services, wan, config["log_rate_per_second"], config["log_burst"]
