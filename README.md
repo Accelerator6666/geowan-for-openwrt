@@ -147,4 +147,4 @@ v0.6.1 在 v0.6.0 Sensitive Port Guard 之上增加独立的行为观察告警�
 - 国家、城市、ASN 和网络组织不参与告警阈值或恶意判定。
 - 本版本不执行 nftables 命令，不创建封禁集合，不改变 ACCEPT / DROP / REJECT、DNAT、现有 GeoWAN 黑名单或端口映射。
 
-默认阈值内置于程序。需要本地调整时，可将仓库中的 guard-alert-policy.example.json 复制到 /etc/geowan-console/guard-alert-policy.json 后修改；缺少该文件时使用内置默认值，文件格式无效时自动停用告警计算。
+安装器首次安装时会在本地策略文件不存在的情况下，将 guard-alert-policy.example.json 安装为 /etc/geowan-console/guard-alert-policy.json，并设置 0600 权限；已有本地策略会保留。缺少该文件时程序仍使用内置默认值，文件格式无效时自动停用告警计算。

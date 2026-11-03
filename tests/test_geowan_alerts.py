@@ -177,6 +177,16 @@ class GuardAlertTests(unittest.TestCase):
             self.assertEqual(result["created"], 0)
             conn.close()
 
+    def test_installer_copies_alert_module_and_preserves_local_policy(self):
+        root = Path(__file__).resolve().parents[1]
+        install = (root / "install.sh").read_text(encoding="utf-8")
+        uninstall = (root / "uninstall.sh").read_text(encoding="utf-8")
+        self.assertIn('cp "$BASE/agent/geowan_alerts.py" /usr/libexec/geowan-console/geowan_alerts.py', install)
+        self.assertIn('cp "$BASE/guard-alert-policy.example.json" /etc/geowan-console/guard-alert-policy.json', install)
+        self.assertIn('if [ ! -f /etc/geowan-console/guard-alert-policy.json ]; then', install)
+        self.assertIn('rm -rf /usr/libexec/geowan-console', uninstall)
+        self.assertNotIn('rm -f /etc/geowan-console/guard-alert-policy.json', uninstall)
+
     def test_guard_overview_returns_geoip_enriched_alerts(self):
         now = 1800000000
         with tempfile.TemporaryDirectory() as tmp:
