@@ -2,7 +2,7 @@ name: GeoWAN Console checks
 
 on:
   push:
-    branches: [main, develop-v0.5.0, develop-v0.5.1]
+    branches: [main, develop-v0.5.0, develop-v0.5.1, develop-v0.6.0]
   pull_request:
   workflow_dispatch:
 
