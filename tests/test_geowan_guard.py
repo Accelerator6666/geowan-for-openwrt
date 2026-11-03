@@ -127,6 +127,14 @@ config redirect 'rdp-other'
         )
         with mock.patch.object(guard, "run", return_value=owned):
             self.assertTrue(guard._chain_exists())
+
+        # OpenWrt nft commonly renders priority -2 as "filter - 2".
+        formatted_owned = (
+            'type filter hook forward priority filter - 2; policy accept; '
+            'comment "GeoWAN Sensitive Port Guard v0.6.0";'
+        )
+        with mock.patch.object(guard, "run", return_value=formatted_owned):
+            self.assertTrue(guard._chain_exists())
         with mock.patch.object(
             guard, "run",
             return_value=(
