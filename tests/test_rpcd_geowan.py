@@ -142,7 +142,7 @@ class RpcLookupTests(unittest.TestCase):
         self.assertEqual(methods["source_profile"], {"ip": "", "period": "24h"})
         self.assertEqual(methods["asn_profile"], {"asn": 15169, "period": "24h"})
         self.assertEqual(methods["correlations"], {"period": "24h"})
-        self.assertEqual(methods["guard_overview"], {"period": "24h"})
+        self.assertEqual(methods["guard_overview"], {"period": "24h", "public_port": 0})
         self.assertEqual(methods["list_bans"]["page_size"], 50)
 
     def test_dispatch_routes_new_read_only_profile_methods(self):
