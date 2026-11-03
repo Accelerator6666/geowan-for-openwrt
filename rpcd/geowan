@@ -11,11 +11,13 @@ repository_agent = Path(__file__).resolve().parents[1] / "agent"
 # installed modules for the live rpcd runtime.
 if (repository_agent / "geowan_rpc.py").is_file() and \
    (repository_agent / "geowan_geoip.py").is_file() and \
-   (repository_agent / "geowan_profile.py").is_file():
+   (repository_agent / "geowan_profile.py").is_file() and \
+   (repository_agent / "geowan_guard.py").is_file():
     module_dir = repository_agent
 elif (installed / "geowan_rpc.py").is_file() and \
      (installed / "geowan_geoip.py").is_file() and \
-     (installed / "geowan_profile.py").is_file():
+     (installed / "geowan_profile.py").is_file() and \
+     (installed / "geowan_guard.py").is_file():
     module_dir = installed
 else:
     raise SystemExit("GeoWAN RPC modules not found")
@@ -34,7 +36,8 @@ METHODS = {
     "analytics": {"period": "24h"},
     "source_profile": {"ip": "", "period": "24h"},
     "asn_profile": {"asn": 15169, "period": "24h"},
-    "correlations": {"period": "24h"}
+    "correlations": {"period": "24h"},
+    "guard_overview": {"period": "24h"}
 }
 
 if len(sys.argv) < 2:
