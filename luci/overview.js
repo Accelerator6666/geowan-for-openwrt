@@ -1052,7 +1052,7 @@ function guardPanel() {
         refreshButton.disabled = true;
         dom.content(result, '正在读取敏感端口资产和访问样本……');
         getGuardOverview(period.value).then(function(data) {
-            render(dataFromRpc(data));
+            render(data);
         }).catch(function(error) {
             dom.content(result, E('p', { 'class': 'gw-error' },
                 'Guard RPC 请求失败：' + String(error)));
