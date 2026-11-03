@@ -235,9 +235,11 @@ def evaluate_guard_alerts(conn, now=None, policy_path=None, candidate_limit=200)
 
     limit = max(1, min(1000, int(candidate_limit)))
     cooldown = policy["cooldown_seconds"]
-    active_join = """
+    active_from = """
         FROM guard_events e
         JOIN guard_services s ON s.service_id=e.service_id
+    """
+    active_where = """
         WHERE s.runtime_active=1 AND s.conflict=0
           AND e.ts>=? AND e.ts<=?
     """
@@ -251,7 +253,7 @@ def evaluate_guard_alerts(conn, now=None, policy_path=None, candidate_limit=200)
             SELECT e.src,COUNT(*) AS samples,
                    COUNT(DISTINCT e.public_port) AS port_count,
                    MIN(e.ts),MAX(e.ts),GROUP_CONCAT(DISTINCT e.public_port)
-        """ + active_join + """
+        """ + active_from + active_where + """
             GROUP BY e.src
             HAVING COUNT(DISTINCT e.public_port)>=? AND COUNT(*)>=?
             ORDER BY port_count DESC,samples DESC,e.src LIMIT ?
@@ -281,7 +283,7 @@ def evaluate_guard_alerts(conn, now=None, policy_path=None, candidate_limit=200)
             SELECT e.src,e.public_port,COUNT(*) AS samples,
                    COUNT(DISTINCT e.src_port) AS source_ports,
                    MIN(e.ts),MAX(e.ts),GROUP_CONCAT(DISTINCT e.src_port)
-        """ + active_join + """
+        """ + active_from + active_where + """
             GROUP BY e.src,e.public_port
             HAVING COUNT(*)>=?
             ORDER BY samples DESC,e.src,e.public_port LIMIT ?
@@ -311,8 +313,9 @@ def evaluate_guard_alerts(conn, now=None, policy_path=None, candidate_limit=200)
                    COUNT(DISTINCT e.src) AS source_count,
                    MIN(e.ts),MAX(e.ts),GROUP_CONCAT(DISTINCT e.src),
                    COUNT(DISTINCT g.country_code),COUNT(DISTINCT g.asn)
-        """ + active_join + """
+        """ + active_from + """
             LEFT JOIN geoip_cache g ON g.ip=e.src
+        """ + active_where + """
             GROUP BY e.public_port
             HAVING COUNT(DISTINCT e.src)>=? AND COUNT(*)>=?
             ORDER BY source_count DESC,samples DESC,e.public_port LIMIT ?
@@ -398,9 +401,10 @@ def evaluate_guard_alerts(conn, now=None, policy_path=None, candidate_limit=200)
                    GROUP_CONCAT(DISTINCT e.src),
                    GROUP_CONCAT(DISTINCT e.public_port),
                    GROUP_CONCAT(DISTINCT g.country_code)
-        """ + active_join + """
+        """ + active_from + """
             JOIN geoip_cache g ON g.ip=e.src
-            WHERE g.asn IS NOT NULL AND g.asn>0
+        """ + active_where + """
+            AND g.asn IS NOT NULL AND g.asn>0
             GROUP BY g.asn
             HAVING COUNT(DISTINCT e.src)>=? AND COUNT(*)>=?
             ORDER BY source_count DESC,samples DESC,g.asn LIMIT ?
