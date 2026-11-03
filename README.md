@@ -11,7 +11,7 @@
 - SQLite 持久保存被封锁 IP 和最近 30 天的**采样**内核日志；v0.2 快速监控每 5 秒采样计数器、每 15 秒盘点动态集合和扫描日志；每 5 分钟保留一次恢复/全量对账任务。
 - GeoIP 数据库更新脚本已提供，但**不会自动排程**：首次下载需要手动执行并验证，后续月度自动更新将在单独验收后启用。它只更新离线 MMDB 文件，不修改 nftables 或 CN 前缀集合。
 - IPv4/IPv6 分别维护统计；前端只读，走现有 LuCI/rpcd 身份验证和单一状态 JSON 文件；LuCI 每 5 秒刷新。
-- v0.6.0 Guard 额外要求可读取 `uci export firewall`、`nft list chain inet fw4 dstnat_wan` 和 `ubus network.interface.wan status`；通过本机 GeoIP 缓存区分国内/海外来源，不调用公网 API。Guard 配置保存在 `/etc/geowan-console/guard.json`，默认 `enabled=true`、`mode=observe`、每服务每秒最多 2 条日志、burst 10。
+- v0.6.0 Guard 额外要求可读取 `uci export firewall`、`nft list chain inet fw4 dstnat_wan` 和 `ubus network.interface.wan status`；通过本机 GeoIP 缓存区分国内/海外来源，不调用公网 API。Guard 配置保存在 `/etc/geowan-console/guard.json`；安装器首次安装时创建 `enabled=true`、`mode=observe`、每服务每秒最多 2 条日志、burst 10 的观察配置。若配置文件缺失或无效，运行模块采用 `enabled=false` 的 fail-safe 默认值。
 - 可选离线 DB-IP Lite MMDB 归属查询：国家、洲、地区/城市、ASN 和网络组织；数据在本机查询，不调用逐 IP 公网 API。
 - LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
 - v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
@@ -87,8 +87,8 @@
 2. RDP、SSL VPN、JumpServer 的端口映射由现有防火墙配置管理；本项目不改动。
 3. SQLite 包含来源 IP、时间、目的 IP/端口等敏感运维日志，不要上传公开 GitHub。
 4. v0.6.0 Guard 只在 `inet fw4` 中创建独立的 `geo_guard_forward` base chain（forward priority -2），只对 WAN 入站、`ct state new`、`ct status dnat` 的流量执行 counter 和限速 log；按 IPv4/IPv6 与 conntrack 原始公网端口分别匹配。该链不插入现有 `geo_wan_forward`/`geo_filter`，不改变现有链、集合、DNAT 或转发 verdict。国家/地区仅用于归属分析，不作为可信或恶意判定；采集点位于 GeoWAN 国家过滤之前，因此样本可能随后被既有规则丢弃。
-5. 映射冲突的服务不会生成 Guard 采集规则。若 WAN 设备无法识别、运行时 DNAT 链不可读或 Guard 链签名不匹配，Guard 会报告异常并停止更新，不会猜测规则或执行封禁。
-6. 卸载会在确认链的类型、hook、priority 和 accept policy 符合 Guard 标识后删除 `geo_guard_forward`；`guard.json` 和 SQLite 数据保留。
+5. 映射冲突的服务不会生成 Guard 采集规则。若 WAN 设备无法识别、运行时 DNAT 链不可读或 Guard 链的类型、hook、priority、policy、专属注释任一不匹配，Guard 会报告异常并停止更新，不会清空或接管同名链，也不会猜测规则或执行封禁。
+6. 卸载会在确认链的类型、hook、priority、accept policy 及专属链注释 `GeoWAN Sensitive Port Guard v0.6.0` 全部匹配后，才删除 `geo_guard_forward`；未匹配的同名链保持不动；`guard.json` 和 SQLite 数据保留。
 7. 黑名单恢复依赖已存在且未过期的 nft 动态集合；若规则缺失，会跳过并报告，不会建立替代防火墙。
 
 ## 卸载
