@@ -5,10 +5,13 @@ set -eu
 
 # Remove only the dedicated Guard base chain; leave fw4 GeoWAN chains and sets intact.
 if nft list chain inet fw4 geo_guard_forward >/dev/null 2>&1; then
-    if nft list chain inet fw4 geo_guard_forward 2>/dev/null | grep -q 'hook forward priority -2'; then
+    GUARD_CHAIN_STATE="$(nft list chain inet fw4 geo_guard_forward 2>/dev/null || true)"
+    if printf '%s\n' "$GUARD_CHAIN_STATE" | grep -q 'type filter' &&
+       printf '%s\n' "$GUARD_CHAIN_STATE" | grep -q 'hook forward priority -2' &&
+       printf '%s\n' "$GUARD_CHAIN_STATE" | grep -q 'policy accept'; then
         nft delete chain inet fw4 geo_guard_forward
     else
-        echo "WARNING: geo_guard_forward exists but is not the expected Guard chain; leaving it untouched."
+        echo "WARNING: geo_guard_forward does not match the expected Guard base-chain signature; leaving it untouched."
     fi
 fi
 /etc/init.d/geowan-console disable 2>/dev/null || :
