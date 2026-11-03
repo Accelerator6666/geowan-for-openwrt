@@ -399,7 +399,10 @@ def lookup_ip(value):
 
 
 def monitor_cycle(state, conn):
-    """Run one fast telemetry cycle; never alter nftables rules or DNAT."""
+    """Collect telemetry and refresh only the isolated log/counter Guard chain.
+
+    Existing GeoWAN verdict rules, blacklist sets and DNAT mappings are untouched.
+    """
     try:
         COLLECT_LOCK.mkdir(mode=0o700)
     except FileExistsError:
