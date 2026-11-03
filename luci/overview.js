@@ -40,7 +40,7 @@ var getCorrelations = rpc.declare({
 });
 
 var getGuardOverview = rpc.declare({
-    object: 'geowan', method: 'guard_overview', params: [ 'period' ]
+    object: 'geowan', method: 'guard_overview', params: [ 'period', 'public_port' ]
 });
 
 function timeString(epoch) {
@@ -935,6 +935,9 @@ function guardPanel() {
         E('option', { 'value': '7d' }, '最近 7 天'),
         E('option', { 'value': '30d' }, '最近 30 天')
     ]);
+    var portFilter = E('select', { 'class': 'gw-guard-port' }, [
+        E('option', { 'value': '0', 'selected': 'selected' }, '全部公网端口')
+    ]);
     var refreshButton = E('button', {
         'class': 'cbi-button cbi-button-action',
         'type': 'button'
@@ -955,6 +958,23 @@ function guardPanel() {
         var config = data.config || {};
         var inventory = data.inventory || [];
         var events = data.events || [];
+        var selectedPort = String(data.selected_public_port || '0');
+        var portOptions = [E('option', { 'value': '0' }, '全部公网端口')];
+        var seenPorts = {};
+        inventory.forEach(function(item) {
+            var key = String(item.public_port);
+            if (!item.runtime_active || seenPorts[key]) return;
+            seenPorts[key] = true;
+            portOptions.push(E('option', { 'value': key },
+                key + ' · ' + (item.name || item.category_label || 'DNAT 服务')));
+        });
+        portOptions = portOptions.slice(0, 65);
+        dom.content(portFilter, portOptions);
+        portFilter.value = selectedPort;
+        if (portFilter.value != selectedPort) {
+            portFilter.value = '0';
+            selectedPort = '0';
+        }
         var stateText = !config.enabled ? '已停用' :
             (runtime.mode == 'observe' && runtime.chain_installed ? '观察模式运行中' :
                 (runtime.mode == 'degraded' ? '状态异常' : '等待初始化'));
@@ -990,6 +1010,8 @@ function guardPanel() {
                 item.public_port,
                 String(item.proto || '').toUpperCase(),
                 item.unique_sources,
+                item.domestic_sources,
+                item.foreign_sources,
                 item.samples,
                 item.services
             ];
@@ -1014,6 +1036,8 @@ function guardPanel() {
             E('div', { 'class': 'gw-analytics-metrics gw-guard-metrics' }, [
                 card('观察样本', totals.samples || 0, '内核限速日志样本，不是完整连接数'),
                 card('不同来源 IP', totals.unique_sources || 0, data.period_label),
+                card('国内来源样本', totals.domestic_samples || 0, 'GeoIP 国家代码 CN'),
+                card('海外来源样本', totals.foreign_samples || 0, '不含 GeoIP 未识别来源'),
                 card('命中服务数', totals.unique_services || 0, '当前统计范围'),
                 card('公网端口数', totals.unique_public_ports || 0, '当前统计范围')
             ]),
@@ -1026,7 +1050,7 @@ function guardPanel() {
                 '服务清单来自本机 UCI 配置与运行时 nftables DNAT 规则交叉核对。配置未生效或映射冲突的项目不会生成采集规则。'),
             E('h4', {}, '国内来源敏感端口排行'),
             table(
-                ['公网端口', '协议', '来源 IP 数', '日志样本', '服务映射数'],
+                ['公网端口', '协议', '来源 IP 数', '国内来源', '海外来源', '日志样本', '服务映射数'],
                 portRows
             ),
             E('h4', {}, '国内来源 IP 排行'),
@@ -1051,7 +1075,7 @@ function guardPanel() {
         busy = true;
         refreshButton.disabled = true;
         dom.content(result, '正在读取敏感端口资产和访问样本……');
-        getGuardOverview(period.value).then(function(data) {
+        getGuardOverview(period.value, Number(portFilter.value || 0)).then(function(data) {
             render(data);
         }).catch(function(error) {
             dom.content(result, E('p', { 'class': 'gw-error' },
@@ -1064,16 +1088,18 @@ function guardPanel() {
 
     refreshButton.addEventListener('click', refresh);
     period.addEventListener('change', refresh);
+    portFilter.addEventListener('change', refresh);
     refresh();
 
-    return panel('国内敏感端口防护（观察模式）', [
+    return panel('公网敏感端口防护（观察模式）', [
         E('div', { 'class': 'gw-guard-controls' }, [
             E('label', {}, ['统计范围', period]),
+            E('label', {}, ['公网原始端口', portFilter]),
             refreshButton
         ]),
         result,
         E('p', { 'class': 'gw-muted' },
-            '本版本只采集 GeoWAN 国内网段来源访问当前公网 DNAT 服务的行为。不会自动封禁，不会修改现有 DNAT 或 GeoWAN 黑名单。')
+            '本版本采集所有来源访问当前公网 DNAT 服务的新建尝试，并按本地 GeoIP 区分国内与海外；可按公网原始端口查看来源画像。不会自动封禁，不会修改现有 DNAT 或 GeoWAN 黑名单。')
     ]);
 }
 
