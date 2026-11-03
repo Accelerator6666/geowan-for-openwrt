@@ -34,6 +34,18 @@ fw4 check >/dev/null || {
     exit 1
 }
 
+# Validate the proposed Guard chain in nft check-only mode before stopping services.
+if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c '
+from geowan_guard import validate_guard_rules
+result = validate_guard_rules()
+print("Guard nft check passed:", result)
+'; then
+    :
+else
+    echo "Sensitive Port Guard nft syntax/preflight failed; installation stopped without applying rules."
+    exit 1
+fi
+
 # Validate the rpcd executable against the source checkout before touching
 # installed files or services. This catches stale v0.1 module directories.
 RPC_LIST="$(/usr/bin/python3 "$BASE/rpcd/geowan" list)" || {
