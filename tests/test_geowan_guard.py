@@ -75,9 +75,23 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(len(rdp), 2)
         self.assertTrue(all(row["runtime_active"] for row in rdp))
         self.assertTrue(all(row["config_match"] for row in rdp))
-        self.assertTrue(all(row["category"] == "custom" for row in rdp))
-        self.assertTrue(all("待确认" in row["category_label"] for row in rdp))
+        self.assertTrue(all(row["category"] == "management" for row in rdp))
+        self.assertTrue(all(row["category_label"] == "远程桌面 / RDP" for row in rdp))
         self.assertFalse(any(row["public_port"] == 5001 for row in rows))
+
+    def test_sensitive_service_classification_uses_translated_target_port(self):
+        self.assertEqual(
+            guard._classify("P330tiny", 3389),
+            ("management", "远程桌面 / RDP")
+        )
+        self.assertEqual(
+            guard._classify("custom-high-port", 5001),
+            ("management", "DSM 管理端口候选")
+        )
+        self.assertEqual(
+            guard._classify("syn-file", 5006),
+            ("application", "群晖文件服务端口候选")
+        )
 
     def test_conflicting_public_mapping_is_marked_and_not_rendered(self):
         conflicting = UCI + """
