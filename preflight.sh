@@ -38,6 +38,33 @@ assert d["guard_overview"] == {"period":"24h", "public_port":0, "alert_rule":"al
     else
         fail "rpcd read-only method schemas"
     fi
+    if /usr/bin/python3 - "$BASE" <<'PY'
+import os,sqlite3,sys,tempfile
+sys.path.insert(0, os.path.join(sys.argv[1], "agent"))
+from geowan_guard import ensure_guard_schema
+with tempfile.TemporaryDirectory() as root:
+    db=sqlite3.connect(os.path.join(root, "legacy.sqlite3"))
+    db.execute("""CREATE TABLE guard_alerts(
+        alert_id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'notice',src TEXT NOT NULL,
+        created_at INTEGER NOT NULL,first_seen INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,last_alert_at INTEGER NOT NULL,
+        window_start INTEGER NOT NULL,window_seconds INTEGER NOT NULL,
+        sample_count INTEGER NOT NULL,unique_public_ports INTEGER NOT NULL,
+        public_ports TEXT NOT NULL DEFAULT '[]',
+        occurrence_count INTEGER NOT NULL DEFAULT 1
+    )""")
+    ensure_guard_schema(db)
+    columns={row[1] for row in db.execute("PRAGMA table_info(guard_alerts)")}
+    required={"target_port","details_json","risk_score","risk_factors"}
+    assert required <= columns, columns
+    db.close()
+PY
+    then
+        pass "v0.6.1 alert database additive migration"
+    else
+        fail "v0.6.1 alert database additive migration"
+    fi
 else
     fail "GeoWAN source modules missing"
 fi
