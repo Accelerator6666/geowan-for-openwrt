@@ -450,6 +450,58 @@ def apply_rules(services, wan_device, config, chain_exists=None,
     return len(lines) - 1
 
 
+def validate_guard_rules(command_runner=None):
+    """Syntax-check the proposed Guard chain without applying any nftables change."""
+    runner = command_runner or run
+    uci_text = runner("uci", "-q", "export", "firewall")
+    nft_text = runner("nft", "-a", "list", "chain", "inet", "fw4", "dstnat_wan")
+    services = build_inventory(uci_text, nft_text)
+    wan = ""
+    try:
+        data = json.loads(runner("ubus", "call", "network.interface.wan", "status"))
+        candidate = data.get("l3_device") or data.get("device") or data.get("ifname")
+        if candidate and IFNAME.fullmatch(str(candidate)):
+            wan = str(candidate)
+    except (OSError, subprocess.CalledProcessError, ValueError, json.JSONDecodeError):
+        pass
+    if not wan:
+        for key in ("network.wan.device", "network.wan.ifname"):
+            try:
+                candidate = runner("uci", "-q", "get", key).strip()
+                if candidate and IFNAME.fullmatch(candidate):
+                    wan = candidate
+                    break
+            except (OSError, subprocess.CalledProcessError):
+                pass
+    if not wan:
+        raise RuntimeError("wan_device_unavailable")
+
+    config = read_config()
+    exists = _chain_exists(runner)
+    lines = []
+    if exists:
+        lines.append("flush chain inet fw4 %s" % GUARD_CHAIN)
+    else:
+        lines.append(
+            "add chain inet fw4 %s { type filter hook forward priority -2; "
+            "policy accept; }" % GUARD_CHAIN
+        )
+    rules = render_rules(
+        services, wan, config["log_rate_per_second"], config["log_burst"]
+    )
+    lines.extend(rules)
+    script = "\n".join(lines) + "\n"
+    runner("nft", "-c", "-f", "-", input_text=script)
+    return {
+        "wan_device": wan,
+        "service_count": len(services),
+        "active_service_count": sum(1 for item in services if item["runtime_active"]),
+        "conflict_count": sum(1 for item in services if item["conflict"]),
+        "rule_count": len(rules),
+        "chain_exists": exists
+    }
+
+
 def _save_state(conn, state, now):
     conn.execute(
         "INSERT INTO guard_state(key,value,updated_at) VALUES('runtime',?,?) "
