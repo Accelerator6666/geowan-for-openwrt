@@ -39,6 +39,10 @@ var getCorrelations = rpc.declare({
     object: 'geowan', method: 'correlations', params: [ 'period' ]
 });
 
+var getGuardOverview = rpc.declare({
+    object: 'geowan', method: 'guard_overview', params: [ 'period' ]
+});
+
 function timeString(epoch) {
     return epoch ? new Date(epoch * 1000).toLocaleString() : '—';
 }
@@ -923,7 +927,157 @@ function profilePanel() {
     ]);
 }
 
-function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode) {
+
+function guardPanel() {
+    var period = E('select', { 'class': 'gw-guard-period' }, [
+        E('option', { 'value': '1h' }, '最近 1 小时'),
+        E('option', { 'value': '24h', 'selected': 'selected' }, '最近 24 小时'),
+        E('option', { 'value': '7d' }, '最近 7 天'),
+        E('option', { 'value': '30d' }, '最近 30 天')
+    ]);
+    var refreshButton = E('button', {
+        'class': 'cbi-button cbi-button-action',
+        'type': 'button'
+    }, '刷新敏感端口数据');
+    var result = E('div', { 'class': 'gw-guard-result' }, '正在读取 Guard 状态……');
+    var busy = false;
+
+    function render(data) {
+        if (!data || data.error) {
+            dom.content(result, E('p', { 'class': 'gw-error' },
+                '敏感端口数据暂不可用：' + ((data && data.error) || '未知错误') +
+                '。请确认已部署 v0.6.0 并且监控服务已运行。'));
+            return;
+        }
+
+        var runtime = data.runtime || {};
+        var totals = data.totals || {};
+        var config = data.config || {};
+        var inventory = data.inventory || [];
+        var events = data.events || [];
+        var stateText = !config.enabled ? '已停用' :
+            (runtime.mode == 'observe' && runtime.chain_installed ? '观察模式运行中' :
+                (runtime.mode == 'degraded' ? '状态异常' : '等待初始化'));
+        var stateClass = config.enabled && runtime.mode == 'observe' &&
+            runtime.chain_installed ? 'gw-guard-state-ok' : 'gw-guard-state-warn';
+
+        var inventoryRows = inventory.map(function(item) {
+            var family = item.family == 6 ? 'IPv6' : 'IPv4';
+            var state = item.conflict ? '映射冲突，跳过采集' :
+                (item.runtime_active ? '运行中' : '配置未生效');
+            return [
+                family, String(item.proto || '').toUpperCase(),
+                item.public_port, item.name,
+                item.category_label,
+                (item.dest_ip || '—') + ':' + (item.dest_port || '—'),
+                state
+            ];
+        });
+
+        var eventRows = events.map(function(item) {
+            var country = item.country_name || item.country_code || 'GeoIP 未识别';
+            var source = item.src + (item.src_port ? ':' + item.src_port : '');
+            var target = (item.dst || '—') + ':' + (item.dest_port || '—');
+            return [
+                timeString(item.ts), source, country,
+                item.public_port, item.service_name,
+                target, item.proto
+            ];
+        });
+
+        var portRows = (data.top_ports || []).map(function(item) {
+            return [
+                item.public_port,
+                String(item.proto || '').toUpperCase(),
+                item.unique_sources,
+                item.samples,
+                item.services
+            ];
+        });
+
+        var sourceRows = (data.top_sources || []).map(function(item) {
+            return [
+                item.src,
+                item.country_name || item.country_code || '—',
+                item.asn ? ('AS' + item.asn) : '—',
+                item.asn_org || '—',
+                item.samples
+            ];
+        });
+
+        dom.content(result, [
+            E('div', { 'class': 'gw-guard-status ' + stateClass }, [
+                E('strong', {}, stateText),
+                E('span', {}, ' · WAN 接口：' + (runtime.wan_device || '未识别')),
+                E('span', {}, ' · 采集链：' + (runtime.chain_installed ? '已安装' : '未安装'))
+            ]),
+            E('div', { 'class': 'gw-analytics-metrics gw-guard-metrics' }, [
+                card('观察样本', totals.samples || 0, '内核限速日志样本，不是完整连接数'),
+                card('不同来源 IP', totals.unique_sources || 0, data.period_label),
+                card('命中服务数', totals.unique_services || 0, '当前统计范围'),
+                card('公网端口数', totals.unique_public_ports || 0, '当前统计范围')
+            ]),
+            E('h4', {}, '公网 DNAT 服务资产（最多 100 项）'),
+            table(
+                ['地址族', '协议', '公网端口', '服务名称', '分类', '内网目标', '状态'],
+                inventoryRows
+            ),
+            E('p', { 'class': 'gw-muted' },
+                '服务清单来自本机 UCI 配置与运行时 nftables DNAT 规则交叉核对。配置未生效或映射冲突的项目不会生成采集规则。'),
+            E('h4', {}, '国内来源敏感端口排行'),
+            table(
+                ['公网端口', '协议', '来源 IP 数', '日志样本', '服务映射数'],
+                portRows
+            ),
+            E('h4', {}, '国内来源 IP 排行'),
+            table(
+                ['来源 IP', 'GeoIP 国家', 'ASN', '网络组织', '样本数'],
+                sourceRows
+            ),
+            E('h4', {}, '最近敏感端口访问样本（最多 60 条）'),
+            table(
+                ['时间', '来源 IP:端口', 'GeoIP', '公网端口', '服务', '内网目标', '协议'],
+                eventRows
+            ),
+            runtime.last_error ?
+                E('p', { 'class': 'gw-error' }, 'Guard 状态：' + runtime.last_error) :
+                E('span'),
+            E('p', { 'class': 'gw-muted' }, data.disclaimer || '')
+        ]);
+    }
+
+    function refresh() {
+        if (busy) return;
+        busy = true;
+        refreshButton.disabled = true;
+        dom.content(result, '正在读取敏感端口资产和访问样本……');
+        getGuardOverview(period.value).then(function(data) {
+            render(dataFromRpc(data));
+        }).catch(function(error) {
+            dom.content(result, E('p', { 'class': 'gw-error' },
+                'Guard RPC 请求失败：' + String(error)));
+        }).finally(function() {
+            busy = false;
+            refreshButton.disabled = false;
+        });
+    }
+
+    refreshButton.addEventListener('click', refresh);
+    period.addEventListener('change', refresh);
+    refresh();
+
+    return panel('国内敏感端口防护（观察模式）', [
+        E('div', { 'class': 'gw-guard-controls' }, [
+            E('label', {}, ['统计范围', period]),
+            refreshButton
+        ]),
+        result,
+        E('p', { 'class': 'gw-muted' },
+            '本版本只采集 GeoWAN 国内网段来源访问当前公网 DNAT 服务的行为。不会自动封禁，不会修改现有 DNAT 或 GeoWAN 黑名单。')
+    ]);
+}
+
+function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode, guardNode) {
     var counters = d.counters || {};
     var total = (counters.black4 || 0) + (counters.geo4 || 0) +
                 (counters.black6 || 0) + (counters.geo6 || 0);
@@ -957,6 +1111,7 @@ function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode) {
         lookupNode || E('span'),
         analyticsNode || E('span'),
         profileNode || E('span'),
+        guardNode || E('span'),
         E('div', { 'class': 'gw-columns' }, [
             panel('海外来源国家排行（活跃封禁 IP）', table(['国家', '国家代码', 'IP 数'],
                 (d.top_countries || []).map(function(r) { return [r.country, r.code, r.ips]; }))),
@@ -990,11 +1145,12 @@ return view.extend({
         var blacklist = blacklistPanel();
         var analytics = analyticsPanel();
         var profile = profilePanel();
-        var app = draw(data, lookup, blacklist, analytics, profile);
+        var guard = guardPanel();
+        var app = draw(data, lookup, blacklist, analytics, profile, guard);
         var root = E('div', {}, app);
         poll.add(function() {
             return readStatus('/tmp/geowan-console/status.json').then(function(next) {
-                var refreshed = draw(dataFromRpc(next), lookup, blacklist, analytics, profile);
+                var refreshed = draw(dataFromRpc(next), lookup, blacklist, analytics, profile, guard);
                 dom.content(root, refreshed);
             }).catch(function() {
                 /* Keep the last known snapshot visible during an RPC outage. */
