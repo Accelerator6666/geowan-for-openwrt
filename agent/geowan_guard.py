@@ -415,11 +415,18 @@ def _chain_exists(command_runner=None):
     runner = command_runner or run
     try:
         output = runner("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
-        if "hook forward" not in output or "priority -2" not in output:
+        if ("type filter" not in output or "hook forward" not in output or
+                "priority -2" not in output or "policy accept" not in output):
             raise RuntimeError("guard_chain_name_conflict")
         return True
     except subprocess.CalledProcessError:
         return False
+
+
+def _chain_rule_count(command_runner=None):
+    runner = command_runner or run
+    output = runner("nft", "list", "chain", "inet", "fw4", GUARD_CHAIN)
+    return output.count("GEOWAN_GUARD")
 
 
 def apply_rules(services, wan_device, config, chain_exists=None,
@@ -495,7 +502,10 @@ def refresh_guard(conn, now=None, config_path=None, command_runner=None):
                 "\n".join(desired_rules).encode("utf-8")
             ).hexdigest()
             exists = _chain_exists(runner)
-            if not exists or previous_state.get("rules_fingerprint") != rules_fingerprint:
+            actual_rule_count = _chain_rule_count(runner) if exists else 0
+            if (not exists or
+                    previous_state.get("rules_fingerprint") != rules_fingerprint or
+                    actual_rule_count != len(desired_rules)):
                 apply_rules(
                     services, wan, config, chain_exists=exists,
                     command_runner=runner
@@ -669,7 +679,7 @@ def enrich_guard_sources(conn, resolver, now=None, limit=100):
         SELECT e.src,MIN(e.ts) AS first_seen
         FROM guard_events e
         LEFT JOIN geoip_cache g ON g.ip=e.src AND g.database_version=?
-        WHERE e.ts>=? AND (g.ip IS NULL OR g.lookup_status<>'ok')
+        WHERE e.ts>=? AND g.ip IS NULL
         GROUP BY e.src ORDER BY first_seen,e.src LIMIT ?
     """, (version, now - GUARD_RETENTION, max(1, int(limit)))).fetchall()
     saved = 0
