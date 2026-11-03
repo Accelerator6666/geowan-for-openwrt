@@ -43,13 +43,14 @@ RPC_LIST="$(/usr/bin/python3 "$BASE/rpcd/geowan" list)" || {
 printf '%s' "$RPC_LIST" | /usr/bin/python3 -c '
 import json,sys
 data=json.load(sys.stdin)
-assert set(data) == {"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations"}, data
+assert set(data) == {"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations","guard_overview"}, data
 assert data["lookup"] == {"ip":""}, data
 assert data["get_ban"] == {"ip":""}, data
 assert data["analytics"] == {"period":"24h"}, data
 assert data["source_profile"] == {"ip":"", "period":"24h"}, data
 assert data["asn_profile"] == {"asn":15169, "period":"24h"}, data
 assert data["correlations"] == {"period":"24h"}, data
+assert data["guard_overview"] == {"period":"24h"}, data
 assert data["list_bans"]["page_size"] == 50, data
 ' || {
     echo "rpcd plugin list response invalid; installation stopped."
@@ -157,9 +158,23 @@ mkdir -p /usr/libexec/geowan-console \
     /etc/geowan-console /tmp/geowan-console
 chmod 700 /etc/geowan-console
 
+# The Guard starts in observation-only mode. Preserve any existing local config.
+if [ ! -f /etc/geowan-console/guard.json ]; then
+    cat > /etc/geowan-console/guard.json <<'EOF'
+{
+  "enabled": true,
+  "mode": "observe",
+  "log_rate_per_second": 2,
+  "log_burst": 10
+}
+EOF
+fi
+chmod 600 /etc/geowan-console/guard.json
+
 cp "$BASE/agent/geowan_agent.py" /usr/libexec/geowan-console/agent.py
 cp "$BASE/agent/geowan_geoip.py" /usr/libexec/geowan-console/geowan_geoip.py
 cp "$BASE/agent/geowan_profile.py" /usr/libexec/geowan-console/geowan_profile.py
+cp "$BASE/agent/geowan_guard.py" /usr/libexec/geowan-console/geowan_guard.py
 cp "$BASE/agent/geowan_rpc.py" /usr/libexec/geowan-console/geowan_rpc.py
 cp "$BASE/rpcd/geowan" /usr/libexec/rpcd/geowan
 cp "$BASE/scripts/task.sh" /usr/libexec/geowan-console/task.sh
@@ -203,4 +218,5 @@ echo "Fast monitor: counters every 5s, blacklist inventory/log scan every 15s; 5
 if ! /usr/bin/python3 -c 'import maxminddb' >/dev/null 2>&1; then
     echo "GeoIP lookup is optional and inactive. Install with: apk add python3-maxminddb"
 fi
-echo "No new TCP/UDP port and no firewall rules modified."
+echo "Existing GeoWAN rules/sets and DNAT are unchanged."
+echo "Guard adds only log/counter observation rules in inet fw4 geo_guard_forward; no ACCEPT/DROP/REJECT verdicts and no new listener."
