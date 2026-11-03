@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 import geowan_guard as guard
@@ -109,6 +111,52 @@ config redirect 'rdp-other'
     def test_invalid_wan_interface_is_rejected(self):
         with self.assertRaises(ValueError):
             guard.render_rules([], 'pppoe-wan"; drop')
+
+    def test_missing_guard_config_defaults_to_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = guard.read_config(Path(tmp) / "missing.json")
+            self.assertFalse(config["enabled"])
+            self.assertEqual(config["mode"], "observe")
+
+    def test_existing_chain_must_be_filter_forward_accept(self):
+        with mock.patch.object(
+            guard, "run",
+            return_value="type filter hook forward priority -2; policy accept;"
+        ):
+            self.assertTrue(guard._chain_exists())
+        with mock.patch.object(
+            guard, "run",
+            return_value="type filter hook forward priority -2; policy drop;"
+        ):
+            with self.assertRaises(RuntimeError):
+                guard._chain_exists()
+
+    def test_validate_guard_rules_uses_nft_check_only(self):
+        calls = []
+
+        def fake_runner(*args, input_text=None):
+            calls.append((args, input_text))
+            if args[:3] == ("uci", "-q", "export"):
+                return UCI
+            if args[:5] == ("nft", "-a", "list", "chain", "inet"):
+                return NFT
+            if args[:4] == ("ubus", "call", "network.interface.wan", "status"):
+                return json.dumps({"l3_device": "pppoe-wan"})
+            if args[:5] == ("nft", "list", "chain", "inet", "fw4"):
+                raise subprocess.CalledProcessError(1, args)
+            if args[:3] == ("nft", "-c", "-f"):
+                return ""
+            raise AssertionError("unexpected command: %r" % (args,))
+
+        result = guard.validate_guard_rules(command_runner=fake_runner)
+        self.assertEqual(result["wan_device"], "pppoe-wan")
+        self.assertEqual(result["rule_count"], 4)
+        check_call = next(call for call in calls if call[0][:3] == ("nft", "-c", "-f"))
+        self.assertIn("add chain inet fw4 geo_guard_forward", check_call[1])
+        self.assertIn("ct original proto-dst 58964", check_call[1])
+        self.assertNotIn(" drop", check_call[1])
+        self.assertNotIn(" reject", check_call[1])
+        self.assertNotIn(" accept", check_call[1])
 
     def test_parse_guard_log_preserves_original_public_port_and_translated_target(self):
         line = (
