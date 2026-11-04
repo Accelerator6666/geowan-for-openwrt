@@ -342,6 +342,41 @@ config rule 'legacy_fgtvm_sslvpn'
             name, "input", policy, lambda *args: extra
         ))
 
+    def test_enforce_chain_match_requires_drop_verdicts_and_ban_sets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                UCI, NFT, Path(tmp) / "missing.json", now=1800000000
+            )
+        policy["mode"] = "enforce"
+        lines = [
+            "table inet fw4 {",
+            " chain %s {" % enforce.FORWARD_CHAIN,
+            "  type filter hook forward priority filter - 2; policy accept;",
+            '  comment "%s";' % enforce.CHAIN_COMMENTS[enforce.FORWARD_CHAIN],
+        ]
+        for family, proto, port in sorted(policy["protected"]):
+            marker = "GEOWAN_BLOCK%d|F|%s|%d|" % (
+                family, proto.upper(), port
+            )
+            lines.append(
+                '  iifname "pppoe-wan" counter packets 0 bytes 0 '
+                'log prefix "%s" level warning drop' % marker
+            )
+        for set_name in (enforce.BAN4_SET, enforce.BAN6_SET):
+            for _ in range(3):
+                lines.append(
+                    '  iifname "pppoe-wan" @%s counter packets 0 bytes 0 drop'
+                    % set_name
+                )
+        output = "\n".join(lines)
+        self.assertTrue(enforce._chain_rules_match(
+            enforce.FORWARD_CHAIN, "forward", policy, lambda *args: output
+        ))
+        weakened = output.replace("level warning drop", "level warning", 1)
+        self.assertFalse(enforce._chain_rules_match(
+            enforce.FORWARD_CHAIN, "forward", policy, lambda *args: weakened
+        ))
+
     def test_rules_fingerprint_changes_when_mode_or_policy_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = enforce.build_policy(
