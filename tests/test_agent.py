@@ -156,5 +156,36 @@ class AgentTests(unittest.TestCase):
                 conn.close()
 
 
+    def test_monitor_cycle_passes_boot_id_as_keyword_not_log_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = mock.Mock()
+            state = {
+                "sizes": {"4": 0, "6": 0},
+                "errors": [],
+                "last_inventory": 1,
+                "last_inventory_mono": 100.0,
+                "last_log_mono": 0.0,
+                "last_geoip_mono": 100.0,
+                "last_geoip_cleanup_mono": 100.0,
+                "geoip_resolver": None,
+                "guard_runtime": {"enabled": True},
+            }
+            with mock.patch.object(g, "COLLECT_LOCK", Path(tmp) / "collect.lock"), \\
+                 mock.patch.object(g.time, "time", return_value=1800000000), \\
+                 mock.patch.object(g.time, "monotonic", return_value=100.0), \\
+                 mock.patch.object(g, "boot_id", return_value="boot-test"), \\
+                 mock.patch.object(g, "insert_log_samples"), \\
+                 mock.patch.object(g, "insert_guard_log_samples", return_value=2) as insert_guard, \\
+                 mock.patch.object(g, "evaluate_guard_alerts", return_value={"enabled": True}), \\
+                 mock.patch.object(g, "build_status", return_value={}), \\
+                 mock.patch.object(g, "publish_status"):
+                self.assertTrue(g.monitor_cycle(state, conn))
+
+            insert_guard.assert_called_once_with(
+                conn, 1800000000, boot="boot-test"
+            )
+            self.assertEqual(state["guard_samples_inserted"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
