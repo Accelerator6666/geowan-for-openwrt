@@ -81,6 +81,8 @@ DEFAULT_SENSITIVE_PORTS = [
     {"port": 3306, "proto": "tcp", "family": "any", "label": "MySQL"},
     {"port": 3389, "proto": "tcp", "family": "any", "label": "RDP direct"},
     {"port": 3389, "proto": "udp", "family": "any", "label": "RDP direct"},
+    {"port": 41443, "proto": "tcp", "family": "any", "label": "Legacy custom service port"},
+    {"port": 41443, "proto": "udp", "family": "any", "label": "Legacy custom service port"},
     {"port": 389, "proto": "tcp", "family": "any", "label": "LDAP"},
     {"port": 636, "proto": "tcp", "family": "any", "label": "LDAPS"},
     {"port": 1433, "proto": "tcp", "family": "any", "label": "MSSQL"},
@@ -351,26 +353,10 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
             exceptions.add(key)
             protected_labels.setdefault(key, "SSLVPN exception")
 
-    # Do not infer a direct RDP INPUT exception from a generic WAN ACCEPT rule.
-    # RDP bypasses are discovered only from an active WAN DNAT redirect whose
-    # translated destination port is 3389, or from an explicit local exception_ports
-    # entry. A WAN ACCEPT rule for port 3389 must not silently exempt direct RDP.
-    for section in _parse_uci_sections(uci_text, {"rule"}):
-        if section.get("src", "wan") != "wan" or section.get("enabled", "1") == "0":
-            continue
-        if str(section.get("target", "")).upper() != "ACCEPT":
-            continue
-        name = str(section.get("name") or "")
-        is_vpn = policy["auto_detect_sslvpn"] and _is_sslvpn_name(name)
-        if not is_vpn:
-            continue
-        ports = _parse_port_range(section.get("dest_port"))
-        for port in ports:
-            for proto in _protos(section):
-                for family in (4, 6):
-                    key = (family, proto, port)
-                    exceptions.add(key)
-                    protected_labels.setdefault(key, "SSLVPN exception")
+    # Automatic exceptions are derived only from active WAN DNAT redirects.
+    # Generic WAN ACCEPT rules (including rules named SSLVPN) are not proof that
+    # a public destination port is a live VPN endpoint. Non-DNAT VPN exceptions
+    # must be explicitly listed in the local exception_ports policy.
 
     protected.difference_update(exceptions)
     return {
