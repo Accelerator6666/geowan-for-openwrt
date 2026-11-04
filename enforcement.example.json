@@ -341,17 +341,5 @@
       "family": "any",
       "label": "RDP public"
     },
-    {
-      "port": 3389,
-      "proto": "tcp",
-      "family": "any",
-      "label": "RDP direct"
-    },
-    {
-      "port": 3389,
-      "proto": "udp",
-      "family": "any",
-      "label": "RDP direct"
-    }
   ]
 }
