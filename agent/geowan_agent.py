@@ -23,6 +23,10 @@ from geowan_guard import (
     ensure_guard_schema, refresh_guard, insert_guard_log_samples,
     enrich_guard_sources
 )
+from geowan_enforce import (
+    ensure_enforcement_schema, refresh_enforcement,
+    insert_block_log_samples, enforcement_blocklist
+)
 from geowan_alerts import evaluate_guard_alerts
 
 DB = Path(os.environ.get("GEOWAN_DB", "/etc/geowan-console/telemetry.sqlite3"))
@@ -79,6 +83,7 @@ def db_open():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_geoip_updated ON geoip_cache(updated_at)")
     conn.commit()
     ensure_guard_schema(conn)
+    ensure_enforcement_schema(conn)
     return conn
 
 
@@ -417,8 +422,13 @@ def monitor_cycle(state, conn):
             state["sizes"] = sizes
             state["errors"] = errors
             state["guard_runtime"] = refresh_guard(conn, now)
+            state["guard_enforcement_runtime"] = refresh_enforcement(conn, now)
             state["last_inventory"] = now
             state["last_inventory_mono"] = mono
+        if state.get("guard_enforcement_runtime", {}).get("mode") == "enforce":
+            state["guard_block_samples_inserted"] = insert_block_log_samples(
+                conn, now, boot=boot_id()
+            )
         if state["last_log_mono"] == 0 or mono - state["last_log_mono"] >= LOG_SCAN_INTERVAL:
             insert_log_samples(conn, now)
             state["guard_samples_inserted"] = insert_guard_log_samples(conn, now, boot=boot_id())
@@ -448,6 +458,11 @@ def monitor_cycle(state, conn):
         status["guard"] = state.get("guard_runtime", {})
         status["guard_samples_inserted_last_cycle"] = state.get("guard_samples_inserted", 0)
         status["guard_alerts"] = state.get("guard_alert_summary", {})
+        status["guard_enforcement"] = state.get("guard_enforcement_runtime", {})
+        status["guard_block_samples_inserted_last_cycle"] = state.get(
+            "guard_block_samples_inserted", 0
+        )
+        status["guard_blocklist"] = enforcement_blocklist(conn, now, limit=50)
         publish_status(status)
         return True
     finally:
@@ -469,6 +484,8 @@ def monitor():
         "last_geoip_cleanup_mono": 0.0,
         "geoip_enriched": 0,
         "guard_runtime": {},
+        "guard_enforcement_runtime": {},
+        "guard_block_samples_inserted": 0,
         "guard_samples_inserted": 0,
         "guard_geoip_enriched": 0,
         "guard_alert_summary": {},
@@ -483,7 +500,7 @@ def monitor():
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     conn = db_open()
-    print("GeoWAN fast monitor started: counters=5s, inventory=15s, logs=15s", flush=True)
+    print("GeoWAN fast monitor started: counters=5s, inventory=15s, logs=15s, enforcement log sync=5s", flush=True)
     try:
         while not stopping:
             started = time.monotonic()
@@ -513,6 +530,10 @@ def collect():
         insert_log_samples(conn, now)
         enrich_pending(conn, resolver, now, limit=250)
         guard_runtime = refresh_guard(conn, now)
+        enforcement_runtime = refresh_enforcement(conn, now)
+        block_samples = 0
+        if enforcement_runtime.get("mode") == "enforce":
+            block_samples = insert_block_log_samples(conn, now, boot=boot_id())
         guard_samples = insert_guard_log_samples(conn, now, boot=boot_id())
         enrich_guard_sources(conn, resolver, now, limit=100)
         guard_alert_summary = evaluate_guard_alerts(conn, now)
@@ -521,6 +542,9 @@ def collect():
     status["guard"] = guard_runtime
     status["guard_samples_inserted_last_cycle"] = guard_samples
     status["guard_alerts"] = guard_alert_summary
+    status["guard_enforcement"] = enforcement_runtime
+    status["guard_block_samples_inserted_last_cycle"] = block_samples
+    status["guard_blocklist"] = enforcement_blocklist(conn, now, limit=50)
     resolver.close()
     status["collector"] = {
         "mode": "reconcile",
@@ -575,7 +599,7 @@ def build_status(conn, now, sizes, errors):
         "SELECT (ts/3600)*3600, COUNT(*) FROM events WHERE ts >= ? GROUP BY (ts/3600)",
         (bucket_start,)))
     return {
-        "version": "0.6.0", "updated": now, "status": "degraded" if errors else "ok",
+        "version": "0.7.0", "updated": now, "status": "degraded" if errors else "ok",
         "errors": errors, "set_sizes": sizes, "counters": read_counters(),
         "active_bans": active, "samples_24h": total, "top_sources": top_ip,
         "top_ports": top_port, "events": events, "blacklist": banned,
@@ -613,8 +637,13 @@ def restore():
                 restored += len(pending[start:start + 64])
             except (OSError, subprocess.CalledProcessError) as exc:
                 print(f"Restore IPv{family} batch failed: {exc}")
+    enforcement = refresh_enforcement(conn, now)
+    conn.commit()
     conn.close()
     print(f"GeoWAN restored {restored} expiring IP entries")
+    print("GeoWAN sensitive-port enforcement:", json.dumps(
+        enforcement, ensure_ascii=False
+    ))
 
 
 def main():
