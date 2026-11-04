@@ -220,6 +220,18 @@
       "label": "RDP direct"
     },
     {
+      "port": 41443,
+      "proto": "tcp",
+      "family": "any",
+      "label": "Legacy custom service port"
+    },
+    {
+      "port": 41443,
+      "proto": "udp",
+      "family": "any",
+      "label": "Legacy custom service port"
+    },
+    {
       "port": 389,
       "proto": "tcp",
       "family": "any",
