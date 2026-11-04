@@ -184,6 +184,19 @@ echo "===== RECENT GEOWAN LOG SAMPLES ====="
 logread 2>/dev/null | grep -E 'GEOWAN[46]' | tail -n 5 || true
 
 echo
+echo "===== FLOW OFFLOAD STATUS (READ ONLY) ====="
+for option in flow_offloading flow_offloading_hw; do
+    value="$(uci -q get "firewall.@defaults[0].$option" 2>/dev/null || echo 0)"
+    printf '%s=%s\\n' "$option" "$value"
+done
+if nft -a list ruleset 2>/dev/null | grep -Ei 'flowtable|flow add'; then
+    echo "WARNING: flow offload rules detected. Existing offloaded sessions may bypass ordinary INPUT/FORWARD filter hooks."
+    echo "Do not enable enforce until the WAN ingress fast-path behavior has been reviewed."
+else
+    echo "No nft flowtable rules detected."
+fi
+
+echo
 echo "===== STORAGE AND EXISTING SCHEDULE ====="
 df -h /overlay 2>/dev/null || true
 [ -d /etc/geowan-console/geoip/current ] && ls -lh /etc/geowan-console/geoip/current/ 2>/dev/null || echo "No offline GeoIP database installed"
