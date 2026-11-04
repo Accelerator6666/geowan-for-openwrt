@@ -348,6 +348,7 @@ def enrich_pending(conn, resolver, now=None, limit=250):
 
 
 def geoip_summary(conn, now):
+    ensure_enforcement_schema(conn)
     metadata = read_metadata()
     version = str(metadata.get("release") or "unknown")
     provider = str(metadata.get("provider") or "DB-IP Lite")
