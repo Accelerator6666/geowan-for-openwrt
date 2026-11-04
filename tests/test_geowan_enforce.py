@@ -102,6 +102,39 @@ config rule 'allow_direct_rdp'
         self.assertIn((4, "tcp", 58964), policy["exceptions"])
         self.assertNotIn((4, "tcp", 58964), policy["protected"])
 
+
+    def test_disabled_sslvpn_redirect_and_named_accept_rule_do_not_exempt_41443(self):
+        uci = UCI + """
+config redirect 'legacy_fgtvm_sslvpn'
+        option name 'fgtvm-sslvpn'
+        option src 'wan'
+        option src_dport '41443'
+        option dest_ip '10.0.0.61'
+        option dest_port '41443'
+        option proto 'tcp udp'
+        option enabled '0'
+
+config rule 'legacy_fgtvm_sslvpn'
+        option name 'fgtvm-sslvpn'
+        option src 'wan'
+        option src_port '41443'
+        option dest 'lan'
+        option dest_ip '10.0.0.61'
+        option dest_port '41443'
+        option target 'ACCEPT'
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                uci, NFT, Path(tmp) / "missing.json", now=1800000000
+            )
+        for family in (4, 6):
+            for proto in ("tcp", "udp"):
+                self.assertIn((family, proto, 41443), policy["protected"])
+                self.assertNotIn((family, proto, 41443), policy["exceptions"])
+        # The live 20443 DNAT is still detected as SSLVPN and remains exempt.
+        self.assertIn((4, "tcp", 20443), policy["exceptions"])
+        self.assertIn((4, "udp", 20443), policy["exceptions"])
+
     def test_conflicting_active_redirect_tuple_is_still_protected(self):
         conflict = {
             "family": 4, "proto": "tcp", "public_port": 45678,
