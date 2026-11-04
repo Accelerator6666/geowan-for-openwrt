@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""GeoWAN v0.7 global sensitive-port enforcement.
+"""GeoWAN CN honeypot enforcement.
 
 The nftables data path performs the decision. Python only inventories policy,
 persists the kernel-created source bans, restores them after fw4 reload/reboot,
-and exposes health counters. Country/GeoIP is deliberately not consulted.
+and exposes health counters. The existing geo_cn nft sets classify sources.
 """
 import hashlib
 import ipaddress
@@ -38,85 +38,38 @@ SET_COMMENTS = {
 }
 IFNAME = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 BLOCK_MARKER = re.compile(
-    r"\bGEOWAN_BLOCK([46])\|([IF])\|(TCP|UDP)\|([0-9]{1,5})\|"
+    r"\bGEOWAN_(BLOCK|HONEY)([46])\|([IF])\|(TCP|UDP)\|([0-9]{1,5})\|"
 )
 FIELDS = re.compile(r"\b(SRC|DST|SPT|DPT|PROTO)=([^\s]+)")
 SYSLOG_TIME = re.compile(
     r"^(?:[A-Za-z]{3}\s+)?([A-Za-z]{3}\s+\d{1,2}\s+\d\d:\d\d:\d\d)"
 )
 
-DEFAULT_SENSITIVE_PORTS = [
-    {"port": 20, "proto": "tcp", "family": "any", "label": "FTP data"},
-    {"port": 21, "proto": "tcp", "family": "any", "label": "FTP"},
-    {"port": 22, "proto": "tcp", "family": "any", "label": "SSH"},
-    {"port": 23, "proto": "tcp", "family": "any", "label": "Telnet"},
-    {"port": 80, "proto": "tcp", "family": "any", "label": "HTTP admin/app"},
-    {"port": 443, "proto": "tcp", "family": "any", "label": "HTTPS admin/app"},
-    {"port": 3000, "proto": "tcp", "family": "any", "label": "Grafana"},
-    {"port": 8080, "proto": "tcp", "family": "any", "label": "Web application"},
-    {"port": 8081, "proto": "tcp", "family": "any", "label": "Web application"},
-    {"port": 8096, "proto": "tcp", "family": "any", "label": "Emby/Jellyfin"},
-    {"port": 8123, "proto": "tcp", "family": "any", "label": "Home Assistant"},
-    {"port": 8443, "proto": "tcp", "family": "any", "label": "HTTPS application"},
-    {"port": 8920, "proto": "tcp", "family": "any", "label": "Emby/Jellyfin HTTPS"},
-    {"port": 9000, "proto": "tcp", "family": "any", "label": "MinIO API"},
-    {"port": 9001, "proto": "tcp", "family": "any", "label": "MinIO Console"},
-    {"port": 9090, "proto": "tcp", "family": "any", "label": "Prometheus"},
-    {"port": 9091, "proto": "tcp", "family": "any", "label": "Application service"},
-    {"port": 9092, "proto": "tcp", "family": "any", "label": "Kafka"},
-    {"port": 9443, "proto": "tcp", "family": "any", "label": "HTTPS application"},
-    {"port": 15672, "proto": "tcp", "family": "any", "label": "RabbitMQ management"},
-    {"port": 32400, "proto": "tcp", "family": "any", "label": "Plex"},
-    {"port": 64738, "proto": "udp", "family": "any", "label": "Mumble"},
-    {"port": 111, "proto": "tcp", "family": "any", "label": "RPCbind"},
-    {"port": 111, "proto": "udp", "family": "any", "label": "RPCbind"},
-    {"port": 139, "proto": "tcp", "family": "any", "label": "NetBIOS"},
-    {"port": 445, "proto": "tcp", "family": "any", "label": "SMB"},
-    {"port": 548, "proto": "tcp", "family": "any", "label": "AFP"},
-    {"port": 873, "proto": "tcp", "family": "any", "label": "rsync"},
-    {"port": 2049, "proto": "tcp", "family": "any", "label": "NFS"},
-    {"port": 2049, "proto": "udp", "family": "any", "label": "NFS"},
-    {"port": 2375, "proto": "tcp", "family": "any", "label": "Docker API"},
-    {"port": 2376, "proto": "tcp", "family": "any", "label": "Docker TLS API"},
-    {"port": 3306, "proto": "tcp", "family": "any", "label": "MySQL"},
-    {"port": 3389, "proto": "tcp", "family": "any", "label": "RDP direct"},
-    {"port": 3389, "proto": "udp", "family": "any", "label": "RDP direct"},
-    {"port": 41443, "proto": "tcp", "family": "any", "label": "Legacy custom service port"},
-    {"port": 41443, "proto": "udp", "family": "any", "label": "Legacy custom service port"},
-    {"port": 389, "proto": "tcp", "family": "any", "label": "LDAP"},
-    {"port": 636, "proto": "tcp", "family": "any", "label": "LDAPS"},
-    {"port": 1433, "proto": "tcp", "family": "any", "label": "MSSQL"},
-    {"port": 5432, "proto": "tcp", "family": "any", "label": "PostgreSQL"},
-    {"port": 5900, "proto": "tcp", "family": "any", "label": "VNC"},
-    {"port": 5901, "proto": "tcp", "family": "any", "label": "VNC"},
-    {"port": 5000, "proto": "tcp", "family": "any", "label": "Synology DSM"},
-    {"port": 5001, "proto": "tcp", "family": "any", "label": "Synology DSM HTTPS"},
-    {"port": 5005, "proto": "tcp", "family": "any", "label": "Synology WebDAV"},
-    {"port": 5006, "proto": "tcp", "family": "any", "label": "Synology WebDAV HTTPS"},
-    {"port": 6379, "proto": "tcp", "family": "any", "label": "Redis"},
-    {"port": 6690, "proto": "tcp", "family": "any", "label": "Synology Drive"},
-    {"port": 8006, "proto": "tcp", "family": "any", "label": "Proxmox"},
-    {"port": 9200, "proto": "tcp", "family": "any", "label": "Elasticsearch"},
-    {"port": 9300, "proto": "tcp", "family": "any", "label": "Elasticsearch transport"},
-    {"port": 27017, "proto": "tcp", "family": "any", "label": "MongoDB"},
+DEFAULT_HONEYPOT_PORTS = [
+    {"port": 21, "proto": "tcp", "family": "any", "label": "FTP probe"},
+    {"port": 23, "proto": "tcp", "family": "any", "label": "Telnet probe"},
+    {"port": 445, "proto": "tcp", "family": "any", "label": "SMB probe"},
 ]
 DEFAULT_EXCEPTION_PORTS = [
     {"port": 20443, "proto": "tcp", "family": "any", "label": "SSLVPN"},
     {"port": 20443, "proto": "udp", "family": "any", "label": "SSLVPN"},
     {"port": 58964, "proto": "tcp", "family": "any", "label": "RDP public"},
     {"port": 58964, "proto": "udp", "family": "any", "label": "RDP public"},
+    {"port": 31080, "proto": "tcp", "family": "any", "label": "JumpServer public"},
+    {"port": 31080, "proto": "udp", "family": "any", "label": "JumpServer public"},
 ]
+RESERVED_PORTS = {(family, proto, port)
+                  for family in (4, 6)
+                  for proto in ("tcp", "udp")
+                  for port in (31080, 58964, 20443)}
 DEFAULT_POLICY = {
     "enabled": True,
     "mode": "observe",
     "ban_seconds": BAN_SECONDS_DEFAULT,
     "max_bans": 65536,
-    "protect_all_active_redirects": True,
-    "auto_detect_rdp": True,
-    "auto_detect_sslvpn": True,
     "log_rate_per_second": 2,
     "log_burst": 10,
-    "sensitive_ports": DEFAULT_SENSITIVE_PORTS,
+    "honeypot_ports": DEFAULT_HONEYPOT_PORTS,
     "exception_ports": DEFAULT_EXCEPTION_PORTS,
 }
 
@@ -241,22 +194,27 @@ def read_policy(path=None):
         policy["mode"] = "disabled"
         policy["policy_error"] = "invalid_numeric_policy"
         return policy
-    for key in ("protect_all_active_redirects", "auto_detect_rdp", "auto_detect_sslvpn"):
-        policy[key] = raw.get(key, DEFAULT_POLICY[key]) is True
     try:
         policy["sensitive_set"], policy["sensitive_labels"] = _parse_port_entries(
-            raw.get("sensitive_ports", DEFAULT_SENSITIVE_PORTS)
+            raw.get("honeypot_ports", DEFAULT_HONEYPOT_PORTS)
         )
         policy["exception_set"], policy["exception_labels"] = _parse_port_entries(
             raw.get("exception_ports", DEFAULT_EXCEPTION_PORTS)
         )
+        policy["exception_set"].update(RESERVED_PORTS)
     except ValueError as exc:
         policy["enabled"] = False
         policy["mode"] = "disabled"
         policy["policy_error"] = str(exc)
         return policy
+    # Legacy v0.7 sensitive_ports and redirect flags are intentionally ignored.
+    # Installing new code against an old enforce config must not keep broad bans.
     policy.pop("sensitive_ports", None)
+    policy.pop("honeypot_ports", None)
     policy.pop("exception_ports", None)
+    policy.pop("protect_all_active_redirects", None)
+    policy.pop("auto_detect_rdp", None)
+    policy.pop("auto_detect_sslvpn", None)
     return policy
 
 
@@ -318,7 +276,33 @@ def _is_sslvpn_name(value):
     return bool(re.search(r"ssl[ _-]*vpn", str(value or "").lower()))
 
 
-def build_policy(uci_text, nft_text, config_path=None, now=None):
+def _listening_ports():
+    """Conservatively exclude ports already bound by router-local services."""
+    result = set()
+    for family, proto, filename in (
+        (4, "tcp", "/proc/net/tcp"),
+        (6, "tcp", "/proc/net/tcp6"),
+        (4, "udp", "/proc/net/udp"),
+        (6, "udp", "/proc/net/udp6"),
+    ):
+        try:
+            lines = Path(filename).read_text(encoding="ascii").splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 4 or (proto == "tcp" and fields[3] != "0A"):
+                continue
+            try:
+                port = int(fields[1].rsplit(":", 1)[1], 16)
+            except (ValueError, IndexError):
+                continue
+            if port:
+                result.add((family, proto, port))
+    return result
+
+
+def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None):
     policy = read_policy(config_path)
     if not policy["enabled"]:
         policy.update({
@@ -337,31 +321,13 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
     inventory = build_inventory(uci_text, nft_text, now=now)
     active = [row for row in inventory if row.get("runtime_active")]
     conflicts = [row for row in active if row.get("conflict")]
-    for row in active:
-        family = int(row["family"])
-        proto = str(row["proto"]).lower()
-        port = int(row["public_port"])
-        key = (family, proto, port)
-        # The public tuple is still unambiguous when its backend mapping conflicts.
-        # Protect it; skip only backend-dependent automatic exception detection.
-        if policy["protect_all_active_redirects"]:
-            protected.add(key)
-            protected_labels.setdefault(key, str(row.get("name") or "WAN redirect"))
-        if row.get("conflict"):
-            continue
-        name = str(row.get("name") or "")
-        if policy["auto_detect_rdp"] and _is_rdp_service(row):
-            exceptions.add(key)
-            protected_labels.setdefault(key, "RDP exception")
-        if policy["auto_detect_sslvpn"] and _is_sslvpn_name(name):
-            exceptions.add(key)
-            protected_labels.setdefault(key, "SSLVPN exception")
-
-    # Automatic exceptions are derived only from active WAN DNAT redirects.
-    # Generic WAN ACCEPT rules (including rules named SSLVPN) are not proof that
-    # a public destination port is a live VPN endpoint. Non-DNAT VPN exceptions
-    # must be explicitly listed in the local exception_ports policy.
-
+    # A live public service can never be a honeypot. Remove overlapping tuples
+    # even when a stale local config still lists them.
+    mapped = {(int(row["family"]), str(row["proto"]).lower(),
+               int(row["public_port"])) for row in active}
+    in_use = mapped | (_listening_ports() if listening is None else set(listening))
+    skipped_in_use = sorted(protected & in_use)
+    protected.difference_update(in_use)
     protected.difference_update(exceptions)
     return {
         **policy,
@@ -373,6 +339,7 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
         "conflicting_ports": sorted({
             int(row["public_port"]) for row in conflicts
         }),
+        "skipped_in_use": skipped_in_use,
     }
 
 
@@ -435,16 +402,18 @@ def _render_ban_rules(family, wan, exceptions, ban_set):
 
 def _render_trigger_rule(family, proto, port, path, wan, ban_set, ttl):
     addr = _family_prefix(family)
-    marker = "GEOWAN_BLOCK%d|%s|%s|%d|" % (
+    marker = "GEOWAN_HONEY%d|%s|%s|%d|" % (
         family, path, proto.upper(), port
     )
     return (
-        'add rule inet fw4 CHAIN iifname "%s" %s saddr != @%s '
+        'add rule inet fw4 CHAIN iifname "%s" %s saddr @geo_cn%d '
+        '%s saddr != @%s '
         'meta nfproto ipv%d meta l4proto %s ct state new '
         'ct original proto-dst %d update @%s { %s saddr timeout %ds } '
-        'counter log prefix "%s" level warning drop'
+        'counter log prefix "%s" level warn drop'
     ) % (
-        wan, addr, ban_set, family, proto, port, ban_set, addr, ttl, marker
+        wan, addr, family, addr, ban_set, family, proto, port,
+        ban_set, addr, ttl, marker
     )
 
 
@@ -470,9 +439,11 @@ def render_chain_rules(policy, wan_device, hook, mode=None):
                 family, "I" if hook == "input" else "F", proto.upper(), port
             )
             common = (
-                'iifname "%s" meta nfproto ipv%d meta l4proto %s '
+                'iifname "%s" meta nfproto ipv%d %s saddr @geo_cn%d '
+                'meta l4proto %s '
                 'ct state new ct original proto-dst %d counter'
-            ) % (wan_device, family, proto, port)
+            ) % (wan_device, family, _family_prefix(family), family,
+                 proto, port)
             if mode == "enforce":
                 rule = _render_trigger_rule(
                     family, proto, port, "I" if hook == "input" else "F",
@@ -569,7 +540,7 @@ def _chain_rules_match(name, hook, policy, command_runner):
     except subprocess.CalledProcessError:
         return False
     path_code = "I" if hook == "input" else "F"
-    marker_type = "GEOWAN_BLOCK" if policy.get("mode") == "enforce" else "GEOWAN_SENS"
+    marker_type = "GEOWAN_HONEY" if policy.get("mode") == "enforce" else "GEOWAN_SENS"
     expected = [
         "%s%d|%s|%s|%d|" % (
             marker_type, family, path_code, proto.upper(), port
@@ -589,14 +560,17 @@ def _chain_rules_match(name, hook, policy, command_runner):
             return False
         for marker in expected:
             rule = next(line for line in output.splitlines() if marker in line)
-            if "drop" not in rule:
+            family = int(re.search(r"GEOWAN_HONEY([46])", marker).group(1))
+            if "drop" not in rule or "@geo_cn%d" % family not in rule:
                 return False
         if "@%s" % BAN4_SET not in output or "@%s" % BAN6_SET not in output:
             return False
     else:
         for marker in expected:
             rule = next(line for line in output.splitlines() if marker in line)
-            if "log prefix" not in rule or "drop" in rule or "reject" in rule:
+            family = int(re.search(r"GEOWAN_SENS([46])", marker).group(1))
+            if ("log prefix" not in rule or "drop" in rule
+                    or "reject" in rule or "@geo_cn%d" % family not in rule):
                 return False
     return True
 
@@ -717,6 +691,10 @@ def validate_enforcement_rules(command_runner=None, config_path=None):
     uci_text = runner("uci", "-q", "export", "firewall")
     nft_text = runner("nft", "-a", "list", "chain", "inet", "fw4", "dstnat_wan")
     policy = build_policy(uci_text, nft_text, config_path)
+    if policy["skipped_in_use"]:
+        raise RuntimeError("honeypot_port_is_active_redirect")
+    for family in (4, 6):
+        runner("nft", "list", "set", "inet", "fw4", "geo_cn%d" % family)
     wan = _wan_device(runner)
     if not wan:
         raise RuntimeError("wan_device_unavailable")
@@ -857,6 +835,8 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
             "chain_installed": True,
             "wan_device": wan,
             "protected_port_count": len(policy["protected"]),
+            "honeypot_ports": sorted({port for _, _, port in policy["protected"]}),
+            "skipped_in_use": policy["skipped_in_use"],
             "exception_port_count": len(policy["exceptions"]),
             "active_redirect_count": policy["active_redirect_count"],
             "conflict_count": policy["conflict_count"],
@@ -885,10 +865,11 @@ def parse_block_log(line, now=None, boot="unknown-boot", ban_seconds=BAN_SECONDS
     match = BLOCK_MARKER.search(str(line or ""))
     if not match:
         return None
-    family = 4 if match.group(1) == "4" else 6
-    path = "input" if match.group(2) == "I" else "forward"
-    proto = match.group(3)
-    port = int(match.group(4))
+    family = 4 if match.group(2) == "4" else 6
+    path = "input" if match.group(3) == "I" else "forward"
+    proto = match.group(4)
+    port = int(match.group(5))
+    reason = "cn_honeypot" if match.group(1) == "HONEY" else "sensitive_port_hit"
     if not 1 <= port <= 65535:
         return None
     fields = dict(FIELDS.findall(str(line)))
@@ -927,6 +908,7 @@ def parse_block_log(line, now=None, boot="unknown-boot", ban_seconds=BAN_SECONDS
         "id": event_id, "ts": stamp, "ip": str(source), "family": family,
         "trigger_port": port, "proto": proto, "path": path,
         "dst": str(dest), "expires_at": now + int(ban_seconds),
+        "reason": reason,
     }
 
 
@@ -962,18 +944,19 @@ def insert_block_log_samples(conn, now=None, lines=None, boot="unknown-boot",
             INSERT INTO guard_bans(
                 ip,family,first_seen,last_seen,expires_at,
                 trigger_port,proto,path,dst,reason
-            ) VALUES(?,?,?,?,?,?,?,?,?,'sensitive_port_hit')
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(ip) DO UPDATE SET
                 last_seen=MAX(guard_bans.last_seen,excluded.last_seen),
                 expires_at=MAX(guard_bans.expires_at,excluded.expires_at),
                 trigger_port=COALESCE(guard_bans.trigger_port,excluded.trigger_port),
                 proto=CASE WHEN guard_bans.proto='' THEN excluded.proto ELSE guard_bans.proto END,
                 path=CASE WHEN guard_bans.path='' THEN excluded.path ELSE guard_bans.path END,
-                dst=CASE WHEN guard_bans.dst='' THEN excluded.dst ELSE guard_bans.dst END
+                dst=CASE WHEN guard_bans.dst='' THEN excluded.dst ELSE guard_bans.dst END,
+                reason=excluded.reason
         """, (
             item["ip"], item["family"], item["ts"], item["ts"],
             item["expires_at"], item["trigger_port"], item["proto"],
-            item["path"], item["dst"]
+            item["path"], item["dst"], item["reason"]
         ))
         inserted += 1
     conn.execute("DELETE FROM guard_block_events WHERE ts<?", (now - 90 * 86400,))

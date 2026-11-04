@@ -140,23 +140,23 @@ else
     fail "Sensitive Port Guard nft syntax"
 fi
 echo
-echo "===== GLOBAL SENSITIVE-PORT ENFORCEMENT PREFLIGHT (NO APPLY) ====="
+echo "===== CN HONEYPOT ENFORCEMENT PREFLIGHT (NO APPLY) ====="
 if PYTHONPATH="$BASE/agent" /usr/bin/python3 - <<'PY'
 from geowan_enforce import validate_enforcement_rules
 result = validate_enforcement_rules()
 print("WAN device:", result["wan_device"])
 print("Mode:", result["mode"])
-print("Protected tuples:", result["protected_port_count"])
+print("Honeypot tuples:", result["protected_port_count"])
 print("Exception tuples:", result["exception_port_count"])
 print("Active WAN redirects:", result["active_redirect_count"])
 print("Conflicting redirects:", result["conflict_count"])
 print("Default ban TTL:", result["ban_seconds"], "seconds")
-print("RDP / SSLVPN exceptions:")
+print("Protected business-port exceptions:")
 for item in result["exception_ports"]:
     print("  IPv%d %s/%d - %s" % (
         item["family"], item["proto"].upper(), item["port"], item["label"]
     ))
-print("Protected ports:")
+print("Honeypot ports:")
 for item in result["protected_ports"]:
     print("  IPv%d %s/%d - %s" % (
         item["family"], item["proto"].upper(), item["port"], item["label"]
@@ -164,9 +164,9 @@ for item in result["protected_ports"]:
 print("nft -c INPUT/FORWARD check: PASS (no rules applied)")
 PY
 then
-    pass "Global sensitive-port INPUT/FORWARD nft syntax"
+    pass "CN honeypot INPUT/FORWARD nft syntax"
 else
-    fail "Global sensitive-port INPUT/FORWARD nft syntax"
+    fail "CN honeypot INPUT/FORWARD nft syntax"
 fi
 
 echo

@@ -60,7 +60,7 @@ fi
 if PYTHONPATH="$BASE/agent" /usr/bin/python3 - <<'PY'
 from geowan_enforce import validate_enforcement_rules
 result = validate_enforcement_rules()
-print("Global sensitive-port preflight passed:", {
+print("CN honeypot preflight passed:", {
     "mode": result["mode"],
     "protected_port_count": result["protected_port_count"],
     "exception_port_count": result["exception_port_count"],
@@ -73,7 +73,7 @@ PY
 then
     :
 else
-    echo "Global sensitive-port nft preflight failed; installation stopped without applying rules."
+    echo "CN honeypot nft preflight failed; installation stopped without applying rules."
     exit 1
 fi
 
@@ -227,7 +227,7 @@ mkdir -p /usr/libexec/geowan-console \
     /etc/geowan-console /tmp/geowan-console
 chmod 700 /etc/geowan-console
 
-# v0.7 enforcement starts in observe mode. Preserve an operator-reviewed local policy.
+# New installations start in observe mode. Preserve an operator-reviewed local policy.
 if [ ! -f /etc/geowan-console/enforcement.json ]; then
     cp "$BASE/enforcement.example.json" /etc/geowan-console/enforcement.json
 fi
@@ -304,5 +304,5 @@ if ! /usr/bin/python3 -c 'import maxminddb' >/dev/null 2>&1; then
     echo "GeoIP lookup is optional and inactive. Install with: apk add python3-maxminddb"
 fi
 echo "Existing GeoWAN rules/sets and DNAT are unchanged."
-echo "v0.7 enforcement INPUT/FORWARD policy defaults to OBSERVE; no source blocking until enforcement.json mode is explicitly changed to enforce."
-echo "RDP/SSLVPN Guard exceptions default to public ports 58964 and 20443; verify these against the live UCI inventory before enforcement."
+echo "CN honeypot INPUT/FORWARD policy defaults to OBSERVE on new installs. Check honeypot_ports before enabling enforcement."
+echo "Guard reserves public NAT ports 31080, 58964, and 20443; verify these against the live UCI inventory before enforcement."

@@ -59,29 +59,58 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn((4, "tcp", 20443), policy["exception_set"])
         self.assertIn((6, "tcp", 58964), policy["exception_set"])
 
-    def test_policy_protects_active_nat_and_direct_sensitive_ports(self):
+    def test_default_policy_only_triggers_unused_honeypots(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = enforce.build_policy(
                 UCI, NFT, Path(tmp) / "missing.json", now=1800000000
             )
         protected = policy["protected"]
         exceptions = policy["exceptions"]
-        self.assertIn((4, "tcp", 31080), protected)
-        self.assertIn((4, "tcp", 5001), protected)
-        self.assertIn((6, "tcp", 5001), protected)
-        self.assertIn((4, "tcp", 22), protected)
-        self.assertIn((4, "tcp", 3389), protected)
-        self.assertIn((6, "tcp", 3389), protected)
+        self.assertEqual(protected, {
+            (family, "tcp", port) for family in (4, 6)
+            for port in (21, 23, 445)
+        })
+        self.assertNotIn((4, "tcp", 31080), protected)
         self.assertNotIn((4, "tcp", 58964), protected)
         self.assertNotIn((4, "tcp", 20443), protected)
         self.assertIn((4, "tcp", 58964), exceptions)
         self.assertIn((4, "udp", 58964), exceptions)
         self.assertIn((4, "tcp", 20443), exceptions)
+        self.assertIn((4, "tcp", 31080), exceptions)
+        self.assertIn((4, "udp", 31080), exceptions)
         self.assertEqual(policy["active_redirect_count"], 5)
 
+    def test_legacy_broad_enforcement_fields_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy.json"
+            path.write_text(json.dumps({
+                "enabled": True, "mode": "enforce",
+                "protect_all_active_redirects": True,
+                "auto_detect_rdp": True,
+                "sensitive_ports": [{"port": 31080, "proto": "tcp"}],
+                "exception_ports": []
+            }), encoding="utf-8")
+            policy = enforce.build_policy(UCI, NFT, path, now=1800000000,
+                                          listening=set())
+        self.assertEqual(policy["protected"], {
+            (family, "tcp", port) for family in (4, 6)
+            for port in (21, 23, 445)
+        })
+        self.assertIn((4, "tcp", 31080), policy["exceptions"])
+        self.assertIn((4, "udp", 31080), policy["exceptions"])
+
+    def test_router_listener_cannot_be_honeypot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                UCI, NFT, Path(tmp) / "missing.json", now=1800000000,
+                listening={(4, "tcp", 21)}
+            )
+        self.assertNotIn((4, "tcp", 21), policy["protected"])
+        self.assertIn((4, "tcp", 21), policy["skipped_in_use"])
 
 
-    def test_wan_accept_rule_does_not_exempt_direct_rdp_port(self):
+
+    def test_wan_accept_rule_does_not_create_honeypot(self):
         uci = UCI + """
 config rule 'allow_direct_rdp'
         option name 'Allow RDP'
@@ -94,8 +123,8 @@ config rule 'allow_direct_rdp'
             policy = enforce.build_policy(
                 uci, NFT, Path(tmp) / "missing.json", now=1800000000
             )
-        self.assertIn((4, "tcp", 3389), policy["protected"])
-        self.assertIn((6, "tcp", 3389), policy["protected"])
+        self.assertNotIn((4, "tcp", 3389), policy["protected"])
+        self.assertNotIn((6, "tcp", 3389), policy["protected"])
         self.assertNotIn((4, "tcp", 3389), policy["exceptions"])
         self.assertNotIn((6, "tcp", 3389), policy["exceptions"])
         # The public DNAT port targeting backend 3389 remains the RDP bypass.
@@ -103,7 +132,7 @@ config rule 'allow_direct_rdp'
         self.assertNotIn((4, "tcp", 58964), policy["protected"])
 
 
-    def test_disabled_sslvpn_redirect_and_named_accept_rule_do_not_exempt_41443(self):
+    def test_disabled_redirect_does_not_become_honeypot(self):
         uci = UCI + """
 config redirect 'legacy_fgtvm_sslvpn'
         option name 'fgtvm-sslvpn'
@@ -129,15 +158,15 @@ config rule 'legacy_fgtvm_sslvpn'
             )
         for family in (4, 6):
             for proto in ("tcp", "udp"):
-                self.assertIn((family, proto, 41443), policy["protected"])
+                self.assertNotIn((family, proto, 41443), policy["protected"])
                 self.assertNotIn((family, proto, 41443), policy["exceptions"])
         # The live 20443 DNAT is still detected as SSLVPN and remains exempt.
         self.assertIn((4, "tcp", 20443), policy["exceptions"])
         self.assertIn((4, "udp", 20443), policy["exceptions"])
 
-    def test_conflicting_active_redirect_tuple_is_still_protected(self):
+    def test_active_redirect_overlapping_honeypot_is_skipped(self):
         conflict = {
-            "family": 4, "proto": "tcp", "public_port": 45678,
+            "family": 4, "proto": "tcp", "public_port": 21,
             "dest_ip": "10.0.0.10", "dest_port": 8080,
             "name": "ambiguous-service", "runtime_active": True,
             "conflict": True
@@ -147,17 +176,17 @@ config rule 'legacy_fgtvm_sslvpn'
                 policy = enforce.build_policy(
                     "", "", Path(tmp) / "missing.json", now=1800000000
                 )
-        self.assertIn((4, "tcp", 45678), policy["protected"])
-        self.assertNotIn((4, "tcp", 45678), policy["exceptions"])
+        self.assertNotIn((4, "tcp", 21), policy["protected"])
+        self.assertEqual(policy["skipped_in_use"], [(4, "tcp", 21)])
         self.assertEqual(policy["conflict_count"], 1)
 
-    def test_explicit_custom_sensitive_port_supports_non_nat_ipv6(self):
+    def test_explicit_custom_honeypot_supports_ipv6(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "policy.json"
             path.write_text(json.dumps({
                 "enabled": True,
                 "mode": "observe",
-                "sensitive_ports": [
+                "honeypot_ports": [
                     {"port": 45555, "proto": "udp", "family": 6, "label": "custom app"}
                 ],
                 "exception_ports": []
@@ -168,7 +197,7 @@ config rule 'legacy_fgtvm_sslvpn'
             )
         self.assertEqual(policy["protected"], {(6, "udp", 45555)})
 
-    def test_enforce_rules_cover_input_forward_nat_and_non_nat(self):
+    def test_enforce_rules_cover_cn_honeypots_and_spare_nat_ports(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = enforce.build_policy(
                 UCI, NFT, Path(tmp) / "missing.json", now=1800000000
@@ -181,15 +210,16 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertIn("timeout 604800s", script)
         self.assertIn("hook input priority -2", script)
         self.assertIn("hook forward priority -2", script)
-        self.assertIn("ct original proto-dst 31080", script)
-        self.assertIn("ct original proto-dst 5001", script)
+        self.assertIn("ct original proto-dst 21", script)
+        self.assertNotIn("ct original proto-dst 31080 update", script)
+        self.assertNotIn("ct original proto-dst 5001", script)
         self.assertIn("update @geo_guard_ban4", script)
         self.assertIn("update @geo_guard_ban6", script)
-        self.assertIn('counter log prefix "GEOWAN_BLOCK4|I|TCP|5001|" level warning drop', script)
-        self.assertIn("ct original proto-dst != { 20443, 58964 }", script)
+        self.assertIn('counter log prefix "GEOWAN_HONEY4|I|TCP|21|" level warn drop', script)
+        self.assertIn("ct original proto-dst != { 20443, 31080, 58964 }", script)
         self.assertNotIn("ct status dnat", script)
-        self.assertNotIn("@geo_cn4", script)
-        self.assertNotIn("@geo_cn6", script)
+        self.assertIn("ip saddr @geo_cn4", script)
+        self.assertIn("ip6 saddr @geo_cn6", script)
         self.assertIn("drop", script)
 
     def test_observe_mode_never_changes_verdicts(self):
@@ -200,9 +230,10 @@ config rule 'legacy_fgtvm_sslvpn'
         script = enforce.render_enforcement_script(policy, "pppoe-wan")
         self.assertIn("hook input priority -2", script)
         self.assertIn("hook forward priority -2", script)
-        self.assertIn("ct original proto-dst 31080", script)
-        self.assertIn("ct original proto-dst 5001", script)
-        self.assertIn('log prefix "GEOWAN_SENS4|I|TCP|5001|"', script)
+        self.assertIn("ct original proto-dst 21", script)
+        self.assertNotIn("ct original proto-dst 31080", script)
+        self.assertIn('log prefix "GEOWAN_SENS4|I|TCP|21|"', script)
+        self.assertIn("ip saddr @geo_cn4", script)
         self.assertNotIn("drop", script)
         self.assertNotIn("reject", script)
         self.assertNotIn("update @geo_guard_ban", script)
@@ -221,8 +252,9 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertTrue(trigger_lines)
         self.assertFalse(any("proto-dst 20443" in line for line in trigger_lines))
         self.assertFalse(any("proto-dst 58964" in line for line in trigger_lines))
-        self.assertTrue(any("proto-dst 31080" in line for line in trigger_lines))
-        self.assertTrue(any("proto-dst 3389" in line for line in trigger_lines))
+        self.assertFalse(any("proto-dst 31080" in line for line in trigger_lines))
+        self.assertFalse(any("proto-dst 3389" in line for line in trigger_lines))
+        self.assertTrue(any("proto-dst 21" in line for line in trigger_lines))
 
     def test_parse_block_log_and_idempotent_database_persistence(self):
         now = 1800000000
@@ -238,6 +270,7 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertEqual(item["family"], 4)
         self.assertEqual(item["trigger_port"], 31080)
         self.assertEqual(item["path"], "forward")
+        self.assertEqual(item["reason"], "sensitive_port_hit")
         self.assertEqual(item["expires_at"], now + 7 * 86400)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -261,6 +294,26 @@ config rule 'legacy_fgtvm_sslvpn'
             self.assertEqual(
                 row, (4, 31080, "TCP", "forward", now + 7 * 86400)
             )
+            conn.close()
+
+    def test_cn_honeypot_log_has_distinct_reason(self):
+        now = 1800000000
+        line = (
+            "Wed Nov  4 14:47:09 2026 kern.warn kernel: "
+            "GEOWAN_HONEY4|I|TCP|21| IN=pppoe-wan OUT= "
+            "SRC=180.98.41.231 DST=10.0.0.1 "
+            "PROTO=TCP SPT=50123 DPT=21"
+        )
+        self.assertEqual(enforce.parse_block_log(line, now, "boot1")["reason"],
+                         "cn_honeypot")
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "db.sqlite")
+            enforce.ensure_enforcement_schema(conn)
+            self.assertEqual(enforce.insert_block_log_samples(
+                conn, now, [line], boot="boot1"), 1)
+            self.assertEqual(conn.execute(
+                "SELECT reason FROM guard_bans WHERE ip='180.98.41.231'"
+            ).fetchone()[0], "cn_honeypot")
             conn.close()
 
     def test_parse_nft_set_members_reads_remaining_timeout(self):
@@ -323,8 +376,9 @@ config rule 'legacy_fgtvm_sslvpn'
                 family, proto.upper(), port
             )
             lines.append(
-                '  iifname "pppoe-wan" counter packets 0 bytes 0 '
-                'log prefix "%s" level info' % marker
+                '  iifname "pppoe-wan" %s saddr @geo_cn%d '
+                'counter packets 0 bytes 0 log prefix "%s" level info'
+                % ("ip" if family == 4 else "ip6", family, marker)
             )
         lines.append(" }")
         lines.append("}")
@@ -333,7 +387,7 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertTrue(enforce._chain_rules_match(
             name, "input", policy, runner
         ))
-        missing = output.replace("GEOWAN_SENS4|I|TCP|41443|", "MISSING", 1)
+        missing = output.replace("GEOWAN_SENS4|I|TCP|21|", "MISSING", 1)
         self.assertFalse(enforce._chain_rules_match(
             name, "input", policy, lambda *args: missing
         ))
@@ -355,12 +409,13 @@ config rule 'legacy_fgtvm_sslvpn'
             '  comment "%s";' % enforce.CHAIN_COMMENTS[enforce.FORWARD_CHAIN],
         ]
         for family, proto, port in sorted(policy["protected"]):
-            marker = "GEOWAN_BLOCK%d|F|%s|%d|" % (
+            marker = "GEOWAN_HONEY%d|F|%s|%d|" % (
                 family, proto.upper(), port
             )
             lines.append(
-                '  iifname "pppoe-wan" counter packets 0 bytes 0 '
-                'log prefix "%s" level warning drop' % marker
+                '  iifname "pppoe-wan" %s saddr @geo_cn%d '
+                'counter packets 0 bytes 0 log prefix "%s" level warn drop'
+                % ("ip" if family == 4 else "ip6", family, marker)
             )
         for set_name in (enforce.BAN4_SET, enforce.BAN6_SET):
             for _ in range(3):
@@ -372,7 +427,7 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertTrue(enforce._chain_rules_match(
             enforce.FORWARD_CHAIN, "forward", policy, lambda *args: output
         ))
-        weakened = output.replace("level warning drop", "level warning", 1)
+        weakened = output.replace("level warn drop", "level warn", 1)
         self.assertFalse(enforce._chain_rules_match(
             enforce.FORWARD_CHAIN, "forward", policy, lambda *args: weakened
         ))
@@ -426,8 +481,9 @@ config rule 'legacy_fgtvm_sslvpn'
                         family, path_code, proto.upper(), port
                     )
                     lines.append(
-                        '  iifname "pppoe-wan" counter packets 0 bytes 0 '
-                        'log prefix "%s" level info' % marker
+                        '  iifname "pppoe-wan" %s saddr @geo_cn%d '
+                        'counter packets 0 bytes 0 log prefix "%s" level info'
+                        % ("ip" if family == 4 else "ip6", family, marker)
                     )
                 lines.extend([" }", "}"])
                 chain_outputs[name] = "\n".join(lines)

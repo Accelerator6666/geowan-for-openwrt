@@ -1,171 +1,46 @@
-# GeoWAN for OpenWrt — GeoWAN Console v0.7.0（开发预览）
+# GeoWAN for OpenWrt — CN 蜜罐与黑名单
 
-为 **OpenWrt 25.12 / firewall4 / nftables** 设计的 GeoIP 防护与 WAN 入站敏感端口封禁系统，中文 LuCI 页面，无额外监听端口。
+面向 OpenWrt 25.12.x、firewall4 和 nftables。项目沿用已有的 GeoWAN 地域过滤规则：非 CN WAN 来源在 INPUT/FORWARD 被拒绝并进入 `geo_black4/6`；CN 来源访问明确配置的蜜罐端口时，由 nftables 在首个新建包上立即拒绝并加入 `geo_guard_ban4/6`。LuCI 只显示防护状态和封禁记录。
 
-> **状态：v0.7.0 开发预览；全局敏感端口封禁尚未完成目标路由器实机验收。默认 observe，不会自动封禁。先备份并核对例外端口，再分阶段启用。**
-> 原有 GeoWAN GeoIP 过滤与 DNAT 保持不变。v0.6.x 观察链继续只采集日志；v0.7.0 使用独立 INPUT/FORWARD 链实施敏感端口封禁，初次安装默认 observe，需完成端口例外核对后才可启用 enforce。
+## 当前策略
 
-## 功能
+- 默认蜜罐：TCP 21、23、445。它们必须没有正常监听服务或公网端口映射；部署前需按自己的路由器核对。
+- 默认蜜罐模式为 `observe`。确认端口无业务后，才在 `/etc/geowan-console/enforcement.json` 中改为 `enforce`。
+- 31080、58964、20443 是保留的 NAT 业务端口，不参与蜜罐触发，也绕过 Guard 黑名单规则。已有 GeoWAN 地域过滤和其他防火墙规则仍按原配置工作。
+- 蜜罐只按已有的 `geo_cn4/6` nftables 集合识别 CN 来源，不依赖离线 MMDB 的查询结果。CN 集合表示网段归属，并不能证明访问者的真实位置。
+- Guard 封禁默认 7 天，后台把 nftables 动态集合持久化到 SQLite，并在 firewall4 重载或重启后恢复未到期记录。旧版 v0.7 产生的封禁保留到原到期时间。
+- 其他扫描和渗透行为只有出现明确可验证的触发信号才能自动封禁。单次访问真实业务端口不构成蜜罐命中；限速内核日志也不保证记录每次扫描。
 
-- LuCI → 服务 → **GeoWAN 安全面板**：当前被阻断 IP、包计数、可选时间范围的拦截日志趋势、来源 IP、国家、ASN、目标端口、协议、最近事件和过期时间。
-- SQLite 持久保存被封锁 IP 和最近 30 天的**采样**内核日志；v0.2 快速监控每 5 秒采样计数器、每 15 秒盘点动态集合和扫描日志；每 5 分钟保留一次恢复/全量对账任务。
-- GeoIP 数据库更新脚本已提供，但**不会自动排程**：首次下载需要手动执行并验证，后续月度自动更新将在单独验收后启用。它只更新离线 MMDB 文件，不修改 nftables 或 CN 前缀集合。
-- IPv4/IPv6 分别维护统计；前端只读，走现有 LuCI/rpcd 身份验证和单一状态 JSON 文件；LuCI 每 5 秒刷新。
-- v0.6.0 Guard 额外要求可读取 `uci export firewall`、`nft list chain inet fw4 dstnat_wan` 和 `ubus network.interface.wan status`；通过本机 GeoIP 缓存区分国内/海外来源，不调用公网 API。Guard 配置保存在 `/etc/geowan-console/guard.json`；安装器首次安装时创建 `enabled=true`、`mode=observe`、每服务每秒最多 2 条日志、burst 10 的观察配置。若配置文件缺失或无效，运行模块采用 `enabled=false` 的 fail-safe 默认值。
-- 可选离线 DB-IP Lite MMDB 归属查询：国家、洲、地区/城市、ASN 和网络组织；数据在本机查询，不调用逐 IP 公网 API。
-- LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
-- v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
-- v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。v0.5.1 修复滚动窗口导致的时间桶漂移，统一使用固定 UTC Unix epoch 时间边界；关联簇增加国家/地区、ASN 数量及分布，并返回最多 100 个来源 IP 的明细；来源列表或超过 50 项的国家 / ASN 分布会明确标记截断。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
-- v0.6.0/v0.6.2 Sensitive Port Guard 与多维度行为告警保留：观察活动 WAN DNAT、采样访问事件，并在 LuCI 展示来源画像和行为告警。告警仍是分析线索，不参与封禁决策。
-- v0.7.0 新增 Global Sensitive-Port Enforcement：独立检查 WAN INPUT + FORWARD，使用 conntrack 原始目的端口同时匹配 DNAT 与非 DNAT 流量，覆盖 IPv4/IPv6、TCP/UDP；所有活动 WAN DNAT 映射默认纳入保护，另有 Synology、SSH、SMB、数据库、Docker、Proxmox 等常见非 DNAT 敏感端口清单。任意来源（包括中国 IP）首次命中敏感端口即在 nftables 内核路径加入独立的全局源 IP 动态封禁集合并 DROP，默认 7 天；RDP/SSLVPN 例外默认使用公网 TCP/UDP 58964、20443，并自动识别 RDP 后端 3389 与命名为 SSLVPN 的转发/放行规则；直接公网 3389 不默认豁免，仍作为敏感端口保护；普通 WAN ACCEPT 规则（包括名称含 SSLVPN 的规则）不会自动生成例外；只有活动 WAN DNAT 映射才会触发 RDP/SSLVPN 自动识别，非 DNAT 例外必须显式配置。当前环境的 41443 已列入敏感端口保护。例外仅绕过 Guard 的触发和全局封禁，不覆盖既有 GeoWAN 国家过滤或其他防火墙策略。
-- v0.7.0 初次安装默认 observe，不执行 DROP；必须先核对本机 RDP/SSLVPN 例外端口、敏感端口清单和 nft -c 预检，再将 /etc/geowan-console/enforcement.json 的 mode 改为 enforce。Guard 独立集合和 SQLite 表与既有 geo_black4/6、bans 表隔离。 当前目标路由器没有 IPv6 上网环境，因此本轮实机验收以 IPv4 为准；IPv6 规则与封禁能力保留，待未来具备 IPv6 WAN/LAN 连通性后再做实机验收。监控每 15 秒检查策略指纹，规则未变化时不再 flush/rebuild INPUT/FORWARD 链，以保留 nft counter；仅在链缺失、规则不完整或策略指纹变化时重建。
-- 不在 LAN/WAN 开放新端口，不将日志发布到公网，不需要 Node/npm、Docker 或独立 Web 服务。
+原来的来源画像、ASN 关联和多维告警代码仍在仓库中，暂不出现在简化后的首页，也不参与封禁决策。旧配置中的 `sensitive_ports`、`protect_all_active_redirects`、`auto_detect_rdp`、`auto_detect_sslvpn` 不再生成封禁规则。
 
 ## 运行要求
 
-- OpenWrt 25.12.x、firewall4/nftables、LuCI、rpcd。
-- 已部署 /etc/nftables.d/90-geo-wan.nft，包含：
-  - geo_cn4 / geo_cn6
-  - geo_black4 / geo_black6 动态 set
-  - geo_filter、geo_wan_input、geo_wan_forward
-  - 内核日志前缀 GEOWAN4 / GEOWAN6
-- Python 3 + SQLite 模块（OpenWrt 25.12 apk 包为 python3 和 python3-sqlite3）。
-- GeoIP 为可选功能：安装 `python3-maxminddb` 后运行 DB-IP Lite MMDB 更新器；缺少 reader 或数据库时不影响拦截与基础监控。
-- 数据库 /etc/geowan-console/telemetry.sqlite3，目录权限 0700；状态文件 /tmp/geowan-console/status.json。
+- 现有 `/etc/nftables.d/90-geo-wan.nft` 已提供 `geo_cn4/6`、`geo_black4/6`、`geo_filter`、`geo_wan_input` 和 `geo_wan_forward`。
+- LuCI、rpcd、Python 3 与 `python3-sqlite3`。`python3-maxminddb` 和 DB-IP Lite 是可选的归属地补充。
+- 路由器有足够空间保存 `/etc/geowan-console/telemetry.sqlite3`。
 
-当前 v0.7.0 开发分支为 `develop-v0.7.0-global-sensitive-enforcement`，基于 v0.6.2 的观察与告警能力开发。v0.5.1 不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`、`source_profile`、`asn_profile` 和 `correlations`。画像及关联模块统一使用固定 UTC Unix epoch 时间桶，避免滚动查询窗口改变历史分组。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
+## 安装与检查
 
-## 第一阶段：只读预检
+在路由器备份现有防火墙和 `/etc/geowan-console` 后，下载本分支，先执行 `sh preflight.sh`。预检会检查必需的 nftables 对象、当前端口映射并对候选规则执行 `nft -c`，不应用新规则。只有预检通过再执行 `sh install.sh`。安装器保留已有的 `enforcement.json`；迁移旧版本时应对照 [示例配置](enforcement.example.json)明确设置 `honeypot_ports`。
 
-先在路由器执行：
+安装后检查：
 
-    cd /root/geowan-source
-    sh preflight.sh
+```sh
+cat /tmp/geowan-console/status.json
+nft list chain inet fw4 geo_guard_enforce_input
+nft list chain inet fw4 geo_guard_enforce_forward
+nft list set inet fw4 geo_guard_ban4
+logread | grep GEOWAN_HONEY | tail
+```
 
-脚本只读取系统、nftables 对象、JSON 集合样本、日志和磁盘信息，并执行 `fw4 check` 与 Guard 规则 `nft -c -f -` 语法预检；**不会 reload 防火墙、应用/修改 nftables 规则、写数据库或执行 GeoIP 更新**。如输出 FAIL，先停止并排查，不要安装。
+LuCI 页面位于“服务 → GeoWAN 安全面板”。前端通过现有 LuCI/rpcd 读取状态，不增加监听端口。
 
-## 安装（预检通过后）
+## 验收重点
 
-    apk update
-    apk add python3 python3-sqlite3 python3-maxminddb git
-    cd /root
-    git clone --depth 1 --branch develop-v0.7.0-global-sensitive-enforcement https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
-    cd /root/geowan-source
-    sh preflight.sh
-    sh install.sh
+1. 蜜罐端口没有 WAN 监听或 DNAT；31080、58964、20443 的现有映射保持原样。
+2. CN 来源命中蜜罐：首包 DROP，来源进入 `geo_guard_ban4/6`，随后出现在 LuCI 记录中。
+3. 非 CN 来源：继续由现有 `geo_filter` 拒绝并进入 `geo_black4/6`。
+4. 正常访问业务端口不会因为端口属于 DNAT 或“常见敏感端口”而触发新封禁。
+5. firewall4 重载后，未到期的 Guard 封禁可以恢复；例外业务端口不受 Guard 封禁规则影响。
 
-打开 LuCI：**服务 → GeoWAN 安全面板**。
-
-首次安装后如需启用国家/城市/ASN 查询，执行：
-
-    /usr/libexec/geowan-console/update-geoip.sh 2026-11
-
-数据库来自 [DB-IP Lite](https://db-ip.com/db/lite.php)，按月发布，采用 CC BY 4.0；面板会显示要求的 DB-IP 署名。更新脚本先校验 gzip 和 MMDB 文件，再通过版本目录与原子 symlink 切换数据库。尚未安排自动更新任务。
-
-安装会先检查所需 nftables 对象及 fw4 check。安装后启动 procd 监管的快速监控：计数器每 5 秒采样，动态集合与日志每 15 秒扫描；原有每 5 分钟恢复/全量对账任务保留。GeoIP 自动更新仍关闭；首次数据库下载和每月更新需手动执行，实机验证后再考虑排程。
-
-## 验收命令
-
-    /usr/bin/python3 /usr/libexec/geowan-console/agent.py collect
-    /usr/bin/python3 /usr/libexec/geowan-console/agent.py restore
-    /usr/bin/python3 /usr/libexec/geowan-console/agent.py lookup 8.8.8.8
-    cat /tmp/geowan-console/status.json
-    nft list set inet fw4 geo_black4
-    grep geowan-console /etc/crontabs/root
-    logread | grep GEOWAN | tail
-
-## 数据含义
-
-- **丢弃包数**：当前 nftables 规则加载周期内的 counter；firewall4 reload/reboot 会归零。
-- **事件/来源排行/趋势**：仅来自 GEOWAN4 / GEOWAN6 内核日志的样本。现有规则使用全局日志限速，不会完整记录每个 IP 和每次包命中；任何基于它的统计都不是攻击总量。
-- **Guard 事件**：来自独立 `GEOWAN_GUARD4/6` 日志前缀，采集所有命中公网 DNAT 的新建尝试，并保存原始公网端口与 DNAT 后端信息；国家归属由本地 GeoIP 缓存补充。样本受每服务日志限速影响，最多保留最近 200,000 条或 30 天（先达到者为准），不代表连接成功或完整攻击总量。
-- **动态黑名单**：当前拒绝的非 CN 来源 IP，不等于已经证实为恶意攻击者。
-- **GeoIP**：离线数据库的归属结果是网络注册/分配信息，不是人员真实所在地；DB-IP Lite 覆盖和准确度低于商业版；城市级定位应视为估算。香港/澳门/台湾网段在默认 CN 表外。
-- **IPv6**：设备没有 IPv6 WAN 默认路由时，可能没有实际 IPv6 入站流量。
-
-## 安全边界
-
-1. 不要把 LuCI 面板或状态文件直接暴露公网。仅通过 LAN 或 VPN 管理。
-2. RDP、SSL VPN、JumpServer 的端口映射由现有防火墙配置管理；本项目不改动。
-3. SQLite 包含来源 IP、时间、目的 IP/端口等敏感运维日志，不要上传公开 GitHub。
-4. v0.6.0 Guard 只在 `inet fw4` 中创建独立的 `geo_guard_forward` base chain（forward priority -2），只对 WAN 入站、`ct state new`、`ct status dnat` 的流量执行 counter 和限速 log；按 IPv4/IPv6 与 conntrack 原始公网端口分别匹配。该链不插入现有 `geo_wan_forward`/`geo_filter`，不改变现有链、集合、DNAT 或转发 verdict。国家/地区仅用于归属分析，不作为可信或恶意判定；采集点位于 GeoWAN 国家过滤之前，因此样本可能随后被既有规则丢弃。
-5. 映射冲突的服务不会生成 Guard 采集规则。若 WAN 设备无法识别、运行时 DNAT 链不可读或 Guard 链的类型、hook、priority、policy、专属注释任一不匹配，Guard 会报告异常并停止更新，不会清空或接管同名链，也不会猜测规则或执行封禁。
-6. 卸载会在确认链的类型、hook、priority、accept policy 及专属链注释 `GeoWAN Sensitive Port Guard v0.6.0` 全部匹配后，才删除 `geo_guard_forward`；未匹配的同名链保持不动；`guard.json` 和 SQLite 数据保留。
-7. 黑名单恢复依赖已存在且未过期的 nft 动态集合；若规则缺失，会跳过并报告，不会建立替代防火墙。
-9. v0.7.0 默认敏感端口包括 SSH、SMB、Synology DSM/WebDAV/Drive、HTTP/HTTPS 管理入口、Emby/Jellyfin、Home Assistant、MinIO、数据库、Docker、Proxmox、监控等常见服务；所有活动且无冲突的 WAN DNAT 映射也默认受保护。非 DNAT 自定义端口必须加入 `/etc/geowan-console/enforcement.json` 的 `sensitive_ports`。在启用 enforce 前必须确认这些端口没有被误配置为需要公开服务的普通访问入口。
-
-## 卸载
-
-    cd /root/geowan-source
-    sh uninstall.sh
-    # 如确认不再需要审计数据：
-    # sh uninstall.sh --purge-data
-
-卸载不会改动现有 GeoWAN 或其他防火墙规则。
-
-## 测试
-
-    python3 -m unittest discover -s tests -v
-    python3 -m py_compile agent/*.py rpcd/geowan
-    sh -n install.sh uninstall.sh scripts/*.sh preflight.sh
-    node --check luci/overview.js
-
-
-## v0.5.1 固定时间桶与跨 ASN 关联
-
-- 时间桶按 Unix epoch 固定边界对齐：5 分钟、1 小时或 1 天；查询窗口只决定纳入哪些事件，不再作为时间桶起点。
-- `source_profile` 的活跃时间桶、`asn_profile` 内部关联和全局 `correlations` 使用同一时间边界定义。
-- 关联簇按目标 IP、端口、协议和固定时间桶分组；来源 IP 总数始终统计全部匹配来源。
-- 每个关联簇增加已识别国家/地区数、ASN 数、国家分布、ASN / 网络组织分布及 GeoIP 未识别来源数。
-- 每个关联簇最多返回 100 个来源 IP，附带国家和 ASN 信息；若超过上限，`sources_truncated` 明确为 true，避免把截断列表误认为完整列表。
-- 国家和 ASN 数量均按不同来源 IP 去重，不按日志样本数计算；未知 GeoIP 来源仍计入来源 IP 总数。
-- 时间桶显示的是固定桶起点，统计仅覆盖所选查询窗口内的样本；查询窗口首尾可能出现部分时间桶。
-- 不新增数据库表或索引，不改变防火墙规则、nftables 集合、监听端口、代理分流或现有采集行为。
-
-v0.5.1 回归测试使用已在目标路由器只读核对的案例：`112.82.232.30:40163/UDP`，27 个不同来源 IP、20 个国家/地区、27 个 ASN。测试使用合成 SQLite 数据，不包含生产路由器日志或用户 IP 清单。
-
-## v0.5.0 画像与评分说明
-
-- 来源 IP 画像按所选时间范围聚合 `events`，最多返回 10 个目标端口、10 个目标地址、8 个协议和 30 条事件样本。
-- ASN 画像只纳入当前 GeoIP 数据库版本中成功识别 ASN 的事件来源；来源 IP 列表最多 20 条，端口/目标地址各最多 10 条，协议最多 8 条。
-- 关联簇按目标 IP、目标端口、协议和时间桶聚合。全局关联至少需要 3 个不同来源 IP；单 ASN 内关联至少需要 2 个不同来源 IP。代表性来源最多显示 10 个。
-- 来源观察评分由重复样本、目标端口多样性、目标地址多样性、跨时间桶重复出现和最近活动时间组成。样本少于 3 条时不评分，显示“证据不足”。
-- 评分不使用国家、城市、ASN 名称或云服务商身份作为恶意证据；不等同于威胁情报或攻击者归因，不参与防火墙决策。
-- 内核日志存在限速，所有画像、评分、排行和关联结果均是已采集样本的观察结果，不代表完整攻击总量。
-
-## 独立仓库说明
-
-此项目的正式仓库为 [Accelerator6666/geowan-for-openwrt](https://github.com/Accelerator6666/geowan-for-openwrt)。`main` 保留已在 OpenWrt 实测的旧稳定基线；`develop-v0.5.0`、`develop-v0.5.1` 保留对应开发预览；`develop-v0.6.0` 增加 Sensitive Port Guard，尚未完成目标设备验收。迁移后的源代码位于仓库根目录，无需进入 `projects/geowan-console` 子目录。
-
-
-## v0.6.1 Alert-only 预览
-
-v0.6.1 在 v0.6.0 Sensitive Port Guard 之上增加独立的行为观察告警，不改变现有防火墙决策。
-
-- 默认规则：同一公网来源 IP 在 10 分钟内访问至少 3 个不同的、当前有效且无映射冲突的公网 DNAT 端口，并且至少产生 3 条 Guard 日志样本时，生成一条“多公网端口访问线索”。
-- 同一来源、同一规则使用稳定记录；15 分钟冷却期内只更新最近观察值，不重复增加告警周期。
-- 告警记录保留 30 天，最多 50,000 条；GeoIP 国家、城市、ASN 在读取时从现有本地缓存关联。
-- LuCI Guard 面板显示最近命中时间、来源 IP、国家、ASN、涉及的公网端口、窗口样本数和告警周期。
-- 告警只代表需要人工复核的网络观察线索。日志受限速影响，样本不是完整连接数；正常用户访问多个公开服务也可能触发。
-- 国家、城市、ASN 和网络组织不参与告警阈值或恶意判定。
-- 本版本不执行 nftables 命令，不创建封禁集合，不改变 ACCEPT / DROP / REJECT、DNAT、现有 GeoWAN 黑名单或端口映射。
-
-安装器首次安装时会在本地策略文件不存在的情况下，将 guard-alert-policy.example.json 安装为 /etc/geowan-console/guard-alert-policy.json，并设置 0600 权限；已有本地策略会保留。缺少该文件时程序仍使用内置默认值，文件格式无效时自动停用告警计算。
-
-
-## v0.6.2 多维安全行为告警
-
-v0.6.2 保留 v0.6.1 的单来源多端口规则，并新增高频访问、多来源集中访问、当前活动黑名单来源再次访问及同 ASN 多来源活动关联。
-
-默认规则阈值：
-- 单来源多端口：10 分钟内至少 3 个有效公网端口、3 条日志样本。
-- 单来源高频访问：120 秒内访问同一有效公网端口至少 20 条日志样本。
-- 多来源集中访问：5 分钟内同一有效公网端口至少 8 个不同来源 IP、12 条样本。
-- 当前活动黑名单来源访问：当前仍在活动 GeoWAN 封禁清单中的来源，在 10 分钟内至少 2 条有效服务访问样本。
-- 同 ASN 多来源活动：10 分钟内同 ASN 至少 4 个不同来源 IP、8 条样本。
-
-风险等级和分值仅用于人工分诊，不代表确认攻击。ASN、国家、城市及网络组织只用于关联背景，不作为信誉或恶意判定。活动黑名单规则只关联当前 bans 活动清单；现有数据库不保留已过期封禁历史，不能将其描述为完整历史封禁查询。
-
-新增 alert 表字段通过 SQLite additive migration 增加，不删除或重建既有表。LuCI 可按规则和风险等级筛选告警。告警列表展示风险分值、目标端口、证据摘要及有限来源 IP 列表。
-
-所有规则只使用限速内核日志样本，可能低估真实连接尝试。v0.6.2 不执行 nftables 命令、不改变 ACCEPT / DROP / REJECT、DNAT、GeoWAN 黑名单、路由或监听端口，不自动封禁。
+本地检查：`python3 -m unittest discover -s tests -v`、`node --check luci/overview.js`、`sh -n install.sh preflight.sh scripts/*.sh`。
