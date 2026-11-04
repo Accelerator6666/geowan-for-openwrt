@@ -80,6 +80,28 @@ class EnforcementTests(unittest.TestCase):
         self.assertEqual(policy["active_redirect_count"], 5)
 
 
+
+    def test_wan_accept_rule_does_not_exempt_direct_rdp_port(self):
+        uci = UCI + """
+config rule 'allow_direct_rdp'
+        option name 'Allow RDP'
+        option src 'wan'
+        option dest_port '3389'
+        option proto 'tcp'
+        option target 'ACCEPT'
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                uci, NFT, Path(tmp) / "missing.json", now=1800000000
+            )
+        self.assertIn((4, "tcp", 3389), policy["protected"])
+        self.assertIn((6, "tcp", 3389), policy["protected"])
+        self.assertNotIn((4, "tcp", 3389), policy["exceptions"])
+        self.assertNotIn((6, "tcp", 3389), policy["exceptions"])
+        # The public DNAT port targeting backend 3389 remains the RDP bypass.
+        self.assertIn((4, "tcp", 58964), policy["exceptions"])
+        self.assertNotIn((4, "tcp", 58964), policy["protected"])
+
     def test_conflicting_active_redirect_tuple_is_still_protected(self):
         conflict = {
             "family": 4, "proto": "tcp", "public_port": 45678,
