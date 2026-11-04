@@ -351,17 +351,18 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
             exceptions.add(key)
             protected_labels.setdefault(key, "SSLVPN exception")
 
+    # Do not infer a direct RDP INPUT exception from a generic WAN ACCEPT rule.
+    # RDP bypasses are discovered only from an active WAN DNAT redirect whose
+    # translated destination port is 3389, or from an explicit local exception_ports
+    # entry. A WAN ACCEPT rule for port 3389 must not silently exempt direct RDP.
     for section in _parse_uci_sections(uci_text, {"rule"}):
         if section.get("src", "wan") != "wan" or section.get("enabled", "1") == "0":
             continue
         if str(section.get("target", "")).upper() != "ACCEPT":
             continue
         name = str(section.get("name") or "")
-        is_rdp = policy["auto_detect_rdp"] and (
-            "rdp" in name.lower() or _safe_int(section.get("dest_port")) == 3389
-        )
         is_vpn = policy["auto_detect_sslvpn"] and _is_sslvpn_name(name)
-        if not (is_rdp or is_vpn):
+        if not is_vpn:
             continue
         ports = _parse_port_range(section.get("dest_port"))
         for port in ports:
@@ -369,9 +370,7 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
                 for family in (4, 6):
                     key = (family, proto, port)
                     exceptions.add(key)
-                    protected_labels.setdefault(
-                        key, "RDP exception" if is_rdp else "SSLVPN exception"
-                    )
+                    protected_labels.setdefault(key, "SSLVPN exception")
 
     protected.difference_update(exceptions)
     return {
