@@ -38,11 +38,11 @@ SET_COMMENTS = {
 }
 IFNAME = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 BLOCK_MARKER = re.compile(
-    r"\\bGEOWAN_BLOCK([46])\\|([IF])\\|(TCP|UDP)\\|([0-9]{1,5})\\|"
+    r"\bGEOWAN_BLOCK([46])\|([IF])\|(TCP|UDP)\|([0-9]{1,5})\|"
 )
-FIELDS = re.compile(r"\\b(SRC|DST|SPT|DPT|PROTO)=([^\\s]+)")
+FIELDS = re.compile(r"\b(SRC|DST|SPT|DPT|PROTO)=([^\s]+)")
 SYSLOG_TIME = re.compile(
-    r"^(?:[A-Za-z]{3}\\s+)?([A-Za-z]{3}\\s+\\d{1,2}\\s+\\d\\d:\\d\\d:\\d\\d)"
+    r"^(?:[A-Za-z]{3}\s+)?([A-Za-z]{3}\s+\d{1,2}\s+\d\d:\d\d:\d\d)"
 )
 
 DEFAULT_SENSITIVE_PORTS = [
@@ -251,7 +251,7 @@ def _parse_uci_sections(text, wanted):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        match = re.match(r"^config\\s+(\\S+)(?:\\s+(.+))?$", line)
+        match = re.match(r"^config\s+(\S+)(?:\s+(.+))?$", line)
         if match:
             finish()
             try:
@@ -289,7 +289,7 @@ def _protos(section):
 def _is_rdp_service(item):
     name = str(item.get("name", "")).lower()
     return int(item.get("dest_port") or 0) == 3389 or bool(
-        re.search(r"\\brdp\\b|remote[ _-]?desktop", name)
+        re.search(r"\brdp\b|remote[ _-]?desktop", name)
     )
 
 
@@ -530,7 +530,7 @@ def _chain_state(name, hook, command_runner):
         output = command_runner("nft", "list", "chain", "inet", "fw4", name)
     except subprocess.CalledProcessError:
         return False
-    priority = re.search(r"\\bpriority\\s+(?:filter\\s+)?-\\s*2\\b", output)
+    priority = re.search(r"\bpriority\s+(?:filter\s+)?-\s*2\b", output)
     if (
         "type filter" not in output
         or ("hook " + hook) not in output
@@ -548,7 +548,7 @@ def _set_state(name, family, command_runner):
     except subprocess.CalledProcessError:
         return False
     expected_type = "ipv4_addr" if family == 4 else "ipv6_addr"
-    flags = re.search(r"\\bflags\\s+([^;]+)", output)
+    flags = re.search(r"\bflags\s+([^;]+)", output)
     flag_text = flags.group(1).replace(" ", "") if flags else ""
     if (
         "type " + expected_type not in output
@@ -888,6 +888,7 @@ def insert_block_log_samples(conn, now=None, lines=None, boot="unknown-boot",
 
 def enforcement_blocklist(conn, now=None, limit=100):
     now = int(time.time()) if now is None else int(now)
+    ensure_enforcement_schema(conn)
     return [{
         "ip": row[0], "family": row[1], "first_seen": row[2],
         "last_seen": row[3], "expires_at": row[4],
