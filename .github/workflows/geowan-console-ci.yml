@@ -29,3 +29,4 @@ jobs:
         run: |
           python3 -m json.tool luci/acl.json >/dev/null
           python3 -m json.tool luci/menu.json >/dev/null
+          python3 -m json.tool enforcement.example.json >/dev/null

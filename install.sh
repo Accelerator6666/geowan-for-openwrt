@@ -4,7 +4,7 @@ set -eu
 BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 [ -f "$BASE/agent/geowan_agent.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] && \
 [ -f "$BASE/agent/geowan_enforce.py" ] && [ -f "$BASE/enforcement.example.json" ] || {
-    echo "Run from the complete GeoWAN v0.6.1 project directory"
+    echo "Run from the complete GeoWAN v0.7.0 project directory"
     exit 1
 }
 [ -x /sbin/fw4 ] || { echo "OpenWrt firewall4 required"; exit 1; }

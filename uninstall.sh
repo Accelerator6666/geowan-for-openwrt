@@ -22,10 +22,10 @@ for item in "geo_guard_enforce_input input" "geo_guard_enforce_forward forward";
     if nft list chain inet fw4 "$name" >/dev/null 2>&1; then
         state="$(nft list chain inet fw4 "$name" 2>/dev/null || true)"
         comment="GeoWAN v0.7.0 Global Source Enforcement"
-        if printf '%s\\n' "$state" | grep -q "type filter" &&
-           printf '%s\\n' "$state" | grep -q "hook $hook priority -2" &&
-           printf '%s\\n' "$state" | grep -q "policy accept" &&
-           printf '%s\\n' "$state" | grep -Fq "$comment"; then
+        if printf '%s\n' "$state" | grep -q "type filter" &&
+           printf '%s\n' "$state" | grep -Eq "hook $hook priority (filter )?- ?2" &&
+           printf '%s\n' "$state" | grep -q "policy accept" &&
+           printf '%s\n' "$state" | grep -Fq "$comment"; then
             nft delete chain inet fw4 "$name"
         else
             echo "WARNING: $name ownership signature mismatch; leaving chain untouched."
@@ -38,9 +38,9 @@ for item in "geo_guard_ban4 ipv4_addr" "geo_guard_ban6 ipv6_addr"; do
     if nft list set inet fw4 "$name" >/dev/null 2>&1; then
         state="$(nft list set inet fw4 "$name" 2>/dev/null || true)"
         comment="GeoWAN v0.7.0 Global Source Ban"
-        if printf '%s\\n' "$state" | grep -q "type $addrtype" &&
-           printf '%s\\n' "$state" | grep -Eq "flags .*dynamic.*timeout|flags .*timeout.*dynamic" &&
-           printf '%s\\n' "$state" | grep -Fq "$comment"; then
+        if printf '%s\n' "$state" | grep -q "type $addrtype" &&
+           printf '%s\n' "$state" | grep -Eq "flags .*dynamic.*timeout|flags .*timeout.*dynamic" &&
+           printf '%s\n' "$state" | grep -Fq "$comment"; then
             nft delete set inet fw4 "$name"
         else
             echo "WARNING: $name ownership signature mismatch; leaving set untouched."

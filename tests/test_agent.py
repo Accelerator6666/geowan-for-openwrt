@@ -227,6 +227,10 @@ class AgentTests(unittest.TestCase):
                 g, "refresh_guard", return_value={"enabled": True}
             ))
             stack.enter_context(mock.patch.object(
+                g, "refresh_enforcement",
+                return_value={"enabled": False, "mode": "disabled"}
+            ))
+            stack.enter_context(mock.patch.object(
                 g, "boot_id", return_value="boot-reconcile-test"
             ))
             insert_guard = stack.enter_context(mock.patch.object(

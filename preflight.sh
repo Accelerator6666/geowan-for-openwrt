@@ -23,7 +23,7 @@ if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" 
         fail "GeoWAN Python source syntax"
     fi
     if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts, geowan_enforce'; then
-        pass "GeoWAN alert module import"
+        pass "GeoWAN monitor/enforcement module import"
     else
         fail "GeoWAN alert module import"
     fi
