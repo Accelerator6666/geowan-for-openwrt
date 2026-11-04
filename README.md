@@ -1,9 +1,9 @@
 # GeoWAN for OpenWrt — GeoWAN Console v0.7.0（开发预览）
 
-为 **OpenWrt 25.12 / firewall4 / nftables** 设计的独立 GeoIP 防护可视化和持久化伴侣，中文 LuCI 页面，无额外监听端口。
+为 **OpenWrt 25.12 / firewall4 / nftables** 设计的 GeoIP 防护与 WAN 入站敏感端口封禁系统，中文 LuCI 页面，无额外监听端口。
 
 > **状态：v0.7.0 开发预览；全局敏感端口封禁尚未完成目标路由器实机验收。默认 observe，不会自动封禁。先备份并核对例外端口，再分阶段启用。**
-> 原有 GeoWAN GeoIP 过滤与 DNAT 保持不变。v0.6.0 新增独立的 log/counter-only 观察链 `geo_guard_forward`，不改变 ACCEPT/DROP/REJECT 决策，不启用自动封禁。
+> 原有 GeoWAN GeoIP 过滤与 DNAT 保持不变。v0.6.x 观察链继续只采集日志；v0.7.0 使用独立 INPUT/FORWARD 链实施敏感端口封禁，初次安装默认 observe，需完成端口例外核对后才可启用 enforce。
 
 ## 功能
 
@@ -33,7 +33,7 @@
 - GeoIP 为可选功能：安装 `python3-maxminddb` 后运行 DB-IP Lite MMDB 更新器；缺少 reader 或数据库时不影响拦截与基础监控。
 - 数据库 /etc/geowan-console/telemetry.sqlite3，目录权限 0700；状态文件 /tmp/geowan-console/status.json。
 
-开发分支 `develop-v0.5.1` 从 `develop-v0.5.0` 继续开发。v0.5.1 不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`、`source_profile`、`asn_profile` 和 `correlations`。画像及关联模块统一使用固定 UTC Unix epoch 时间桶，避免滚动查询窗口改变历史分组。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
+当前 v0.7.0 开发分支为 `develop-v0.7.0-global-sensitive-enforcement`，基于 v0.6.2 的观察与告警能力开发。v0.5.1 不改变 SQLite schema，不新增写入型 RPC；保留只读 `lookup`、`list_bans`、`get_ban`、`analytics`、`source_profile`、`asn_profile` 和 `correlations`。画像及关联模块统一使用固定 UTC Unix epoch 时间桶，避免滚动查询窗口改变历史分组。黑名单界面支持 20/50/100 条每页、首页/末页导航，并展示首次发现、最近发现、最近日志样本、剩余封禁时间和日志样本数；剩余封禁时间不足 1 小时时显示提醒，详情面板可关闭，并防止较早返回的详情请求覆盖用户刚选中的 IP。趋势时间范围为 1 小时（5 分钟桶）、24 小时（小时桶）、7 天和 30 天（日桶）；来源国家、ASN、端口、协议和来源 IP 均按已采集的内核日志样本统计。由于内核日志限速，样本数不代表完整连接数或攻击总量。黑名单国家/ASN 排行仍按当前活跃封禁 IP 去重统计，两种口径在界面中分开标注。该版本不提供手动封禁/解封，不修改防火墙规则。首次安装不会自动下载约 140 MB 的 GeoIP 数据库，也不会自动启用月度更新。
 
 ## 第一阶段：只读预检
 
@@ -49,7 +49,7 @@
     apk update
     apk add python3 python3-sqlite3 python3-maxminddb git
     cd /root
-    git clone --depth 1 --branch develop-v0.6.0 https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
+    git clone --depth 1 --branch develop-v0.7.0-global-sensitive-enforcement https://github.com/Accelerator6666/geowan-for-openwrt.git geowan-source
     cd /root/geowan-source
     sh preflight.sh
     sh install.sh
@@ -92,6 +92,7 @@
 5. 映射冲突的服务不会生成 Guard 采集规则。若 WAN 设备无法识别、运行时 DNAT 链不可读或 Guard 链的类型、hook、priority、policy、专属注释任一不匹配，Guard 会报告异常并停止更新，不会清空或接管同名链，也不会猜测规则或执行封禁。
 6. 卸载会在确认链的类型、hook、priority、accept policy 及专属链注释 `GeoWAN Sensitive Port Guard v0.6.0` 全部匹配后，才删除 `geo_guard_forward`；未匹配的同名链保持不动；`guard.json` 和 SQLite 数据保留。
 7. 黑名单恢复依赖已存在且未过期的 nft 动态集合；若规则缺失，会跳过并报告，不会建立替代防火墙。
+9. v0.7.0 默认敏感端口包括 SSH、SMB、Synology DSM/WebDAV/Drive、HTTP/HTTPS 管理入口、Emby/Jellyfin、Home Assistant、MinIO、数据库、Docker、Proxmox、监控等常见服务；所有活动且无冲突的 WAN DNAT 映射也默认受保护。非 DNAT 自定义端口必须加入 `/etc/geowan-console/enforcement.json` 的 `sensitive_ports`。在启用 enforce 前必须确认这些端口没有被误配置为需要公开服务的普通访问入口。
 
 ## 卸载
 
