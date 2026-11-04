@@ -203,6 +203,9 @@ def read_policy(path=None):
     policy["enabled"] = raw.get("enabled", DEFAULT_POLICY["enabled"]) is True
     mode = str(raw.get("mode", DEFAULT_POLICY["mode"])).lower()
     policy["mode"] = mode if mode in ("observe", "enforce", "disabled") else "disabled"
+    if mode not in ("observe", "enforce", "disabled"):
+        policy["enabled"] = False
+        policy["policy_error"] = "invalid_mode"
     if not policy["enabled"]:
         policy["mode"] = "disabled"
     try:
@@ -485,19 +488,26 @@ def render_enforcement_script(policy, wan_device, input_exists=False,
                               forward_exists=False, sets_exist=False):
     mode = policy.get("mode", "observe")
     lines = []
-    if mode == "enforce" and not sets_exist:
-        lines.extend([
-            "add set inet fw4 %s { type ipv4_addr; flags dynamic,timeout; timeout %ds; "
-            "size %d; comment %s; }" % (
-                BAN4_SET, policy["ban_seconds"], policy["max_bans"],
-                json.dumps(SET_COMMENTS[BAN4_SET])
-            ),
-            "add set inet fw4 %s { type ipv6_addr; flags timeout; timeout %ds; "
-            "size %d; comment %s; }" % (
-                BAN6_SET, policy["ban_seconds"], policy["max_bans"],
-                json.dumps(SET_COMMENTS[BAN6_SET])
-            ),
-        ])
+    if mode == "enforce":
+        existing_sets = sets_exist if isinstance(sets_exist, set) else (
+            {BAN4_SET, BAN6_SET} if sets_exist else set()
+        )
+        if BAN4_SET not in existing_sets:
+            lines.append(
+                "add set inet fw4 %s { type ipv4_addr; flags dynamic,timeout; timeout %ds; "
+                "size %d; comment %s; }" % (
+                    BAN4_SET, policy["ban_seconds"], policy["max_bans"],
+                    json.dumps(SET_COMMENTS[BAN4_SET])
+                )
+            )
+        if BAN6_SET not in existing_sets:
+            lines.append(
+                "add set inet fw4 %s { type ipv6_addr; flags dynamic,timeout; timeout %ds; "
+                "size %d; comment %s; }" % (
+                    BAN6_SET, policy["ban_seconds"], policy["max_bans"],
+                    json.dumps(SET_COMMENTS[BAN6_SET])
+                )
+            )
     for name, hook, exists in (
         (INPUT_CHAIN, "input", input_exists),
         (FORWARD_CHAIN, "forward", forward_exists),
@@ -565,7 +575,10 @@ def parse_nft_set_members(output, family):
                 raw = raw.get("prefix", raw.get("val"))
             try:
                 ip = ipaddress.ip_address(raw)
-                if ip.version != family or not ip.is_global:
+                if (
+                    ip.version != family or ip.is_multicast or ip.is_unspecified
+                    or ip.is_loopback or ip.is_link_local
+                ):
                     continue
             except (TypeError, ValueError):
                 continue
@@ -650,13 +663,14 @@ def validate_enforcement_rules(command_runner=None, config_path=None):
         raise RuntimeError("wan_device_unavailable")
     input_exists = _chain_state(INPUT_CHAIN, "input", runner)
     forward_exists = _chain_state(FORWARD_CHAIN, "forward", runner)
-    sets_exist = False
+    existing_sets = set()
     if policy["mode"] == "enforce":
-        set4 = _set_state(BAN4_SET, 4, runner)
-        set6 = _set_state(BAN6_SET, 6, runner)
-        sets_exist = set4 and set6
+        if _set_state(BAN4_SET, 4, runner):
+            existing_sets.add(BAN4_SET)
+        if _set_state(BAN6_SET, 6, runner):
+            existing_sets.add(BAN6_SET)
     script = render_enforcement_script(
-        policy, wan, input_exists, forward_exists, sets_exist
+        policy, wan, input_exists, forward_exists, existing_sets
     )
     runner("nft", "-c", "-f", "-", input_text=script)
     return {
@@ -678,6 +692,14 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
     runner = command_runner or run
     policy = read_policy(config_path)
     try:
+        if policy.get("policy_error"):
+            return {
+                "enabled": False, "mode": "degraded", "chain_installed": False,
+                "active_bans": conn.execute(
+                    "SELECT COUNT(*) FROM guard_bans WHERE expires_at>?", (now,)
+                ).fetchone()[0],
+                "last_error": policy["policy_error"],
+            }
         if not policy["enabled"] or policy["mode"] == "disabled":
             for name, hook in ((INPUT_CHAIN, "input"), (FORWARD_CHAIN, "forward")):
                 if _chain_state(name, hook, runner):
@@ -709,7 +731,7 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
                 exists = _set_state(name, family, runner)
                 if not exists:
                     definition = (
-                        "add set inet fw4 %s { type %s; flags timeout; timeout %ds; "
+                        "add set inet fw4 %s { type %s; flags dynamic,timeout; timeout %ds; "
                         "size %d; comment %s; }"
                     ) % (
                         name, "ipv4_addr" if family == 4 else "ipv6_addr",
@@ -777,7 +799,10 @@ def parse_block_log(line, now=None, boot="unknown-boot", ban_seconds=BAN_SECONDS
     fields = dict(FIELDS.findall(str(line)))
     try:
         source = ipaddress.ip_address(fields.get("SRC", ""))
-        if source.version != family or not source.is_global:
+        if (
+            source.version != family or source.is_multicast
+            or source.is_unspecified or source.is_loopback or source.is_link_local
+        ):
             return None
         dest = ipaddress.ip_address(fields.get("DST", ""))
     except ValueError:
