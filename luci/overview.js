@@ -40,7 +40,8 @@ var getCorrelations = rpc.declare({
 });
 
 var getGuardOverview = rpc.declare({
-    object: 'geowan', method: 'guard_overview', params: [ 'period', 'public_port' ]
+    object: 'geowan', method: 'guard_overview',
+    params: [ 'period', 'public_port', 'alert_rule', 'alert_severity' ]
 });
 
 function timeString(epoch) {
@@ -938,6 +939,21 @@ function guardPanel() {
     var portFilter = E('select', { 'class': 'gw-guard-port' }, [
         E('option', { 'value': '0', 'selected': 'selected' }, '全部公网端口')
     ]);
+    var alertRuleFilter = E('select', { 'class': 'gw-guard-alert-rule' }, [
+        E('option', { 'value': 'all', 'selected': 'selected' }, '全部告警规则'),
+        E('option', { 'value': 'multi_port_access' }, '单来源多端口探测'),
+        E('option', { 'value': 'high_frequency_access' }, '单来源高频访问'),
+        E('option', { 'value': 'multi_source_target' }, '多来源集中访问'),
+        E('option', { 'value': 'active_blacklist_access' }, '活动黑名单来源访问'),
+        E('option', { 'value': 'asn_multi_source' }, '同 ASN 多来源活动')
+    ]);
+    var alertSeverityFilter = E('select', { 'class': 'gw-guard-alert-severity' }, [
+        E('option', { 'value': 'all', 'selected': 'selected' }, '全部风险等级'),
+        E('option', { 'value': 'high' }, '高'),
+        E('option', { 'value': 'medium' }, '中'),
+        E('option', { 'value': 'low' }, '低'),
+        E('option', { 'value': 'notice' }, '待分级（旧记录）')
+    ]);
     var refreshButton = E('button', {
         'class': 'cbi-button cbi-button-action',
         'type': 'button'
@@ -1028,24 +1044,67 @@ function guardPanel() {
             ];
         });
 
+        var ruleLabels = {
+            multi_port_access: '单来源多端口探测',
+            high_frequency_access: '单来源高频访问',
+            multi_source_target: '多来源集中访问',
+            active_blacklist_access: '活动黑名单来源访问',
+            asn_multi_source: '同 ASN 多来源活动'
+        };
+        var severityLabels = {
+            high: '高', medium: '中', low: '低', notice: '待分级'
+        };
+        var factorLabels = {
+            one_source_multiple_public_ports: '单来源访问多个公网端口',
+            repeated_samples_same_source_same_service: '同一来源重复访问同一服务',
+            many_distinct_sources_same_public_service: '多个来源集中访问同一服务',
+            source_is_currently_in_active_geowan_blacklist: '来源当前仍在 GeoWAN 活动黑名单',
+            multiple_sources_same_asn_observed: '同一 ASN 下观察到多个来源 IP'
+        };
         var alertRows = alerts.map(function(item) {
             var ports = [];
-            try {
-                ports = JSON.parse(item.public_ports || '[]');
-            } catch (error) {
-                ports = [];
+            var details = {};
+            var factors = [];
+            try { ports = JSON.parse(item.public_ports || '[]'); } catch (error) {}
+            try { details = JSON.parse(item.details_json || '{}'); } catch (error) {}
+            try { factors = JSON.parse(item.risk_factors || '[]'); } catch (error) {}
+            var sourceLabel = item.src || (details.asn ?
+                ('ASN AS' + details.asn) :
+                ('多来源（' + (details.source_count || 0) + ' 个 IP）'));
+            var geoLabel = item.country_name || item.country_code ||
+                (details.country_codes || []).join(', ') || '—';
+            var asnLabel = item.asn ?
+                ('AS' + item.asn + ' ' + (item.asn_org || '')) :
+                (details.asn ? ('AS' + details.asn + ' ' + (details.asn_org || '')) : '—');
+            var evidence = factors.map(function(value) {
+                return factorLabels[value] || value;
+            }).join('；');
+            if (details.source_ips && details.source_ips.length) {
+                evidence += (evidence ? '；' : '') +
+                    '来源样本：' + details.source_ips.slice(0, 5).join(', ') +
+                    (details.source_ips_truncated ? ' …' : '');
+            }
+            if (details.active_ban_expires_at) {
+                evidence += (evidence ? '；' : '') +
+                    '活动封禁到期：' + timeString(details.active_ban_expires_at);
+            }
+            if (details.distinct_source_ports) {
+                evidence += (evidence ? '；' : '') +
+                    '不同源端口：' + details.distinct_source_ports;
             }
             return [
-                timeString(item.last_seen), item.src,
-                item.country_name || item.country_code || 'GeoIP 未识别',
-                item.asn ? ('AS' + item.asn + ' ' + (item.asn_org || '')) : '—',
-                ports.join(', ') || '—',
+                timeString(item.last_seen),
+                ruleLabels[item.rule_id] || item.rule_id,
+                (severityLabels[item.severity] || item.severity) + ' / ' + (item.risk_score || 0),
+                sourceLabel, geoLabel, asnLabel,
+                item.target_port || ports.join(', ') || '—',
                 item.sample_count || 0,
+                evidence || '—',
                 item.occurrence_count || 1
             ];
         });
         if (!alertRows.length) {
-            alertRows = [['—', '—', '—', '—', '暂无告警线索', '—', '—']];
+            alertRows = [['—', '—', '—', '—', '—', '—', '—', '—', '暂无告警线索', '—']];
         }
 
         dom.content(result, [
@@ -1062,16 +1121,19 @@ function guardPanel() {
                 card('命中服务数', totals.unique_services || 0, '当前统计范围'),
                 card('公网端口数', totals.unique_public_ports || 0, '当前统计范围')
             ]),
-            E('h4', {}, '多公网端口访问线索（告警模式，仅观察）'),
+            E('h4', {}, '多维安全行为告警（Alert-only）'),
             table(
-                ['最近命中', '来源 IP', 'GeoIP 国家', 'ASN / 网络组织',
-                    '访问公网端口', '窗口样本', '告警周期'],
+                ['最近命中', '检测规则', '风险等级 / 分值', '来源 / ASN',
+                    'GeoIP', 'ASN / 网络组织', '目标端口', '窗口样本',
+                    '证据摘要', '告警周期'],
                 alertRows
             ),
             E('p', { 'class': 'gw-muted' },
-                '默认规则：同一来源在 10 分钟内访问至少 3 个不同公网端口时生成观察告警。'
-                + '告警基于限速日志样本，不代表完整连接数或已确认攻击；国家、城市和 ASN 仅作背景信息。'
-                + '告警列表是跨端口关联结果，不随上方单端口筛选变化；不会执行封禁或修改防火墙。'),
+                '规则包含单来源多端口、高频访问、多来源集中访问、活动黑名单来源访问及同 ASN 多来源关联。'
+                + '风险等级仅用于人工分诊，不代表确认攻击；所有阈值均基于限速日志样本。'
+                + 'ASN、国家、城市和网络组织仅作关联背景，不作为信誉或恶意判定。'
+                + '活动黑名单关联只核对当前活动封禁清单，不代表保留了已过期封禁历史。'
+                + '告警筛选不影响上方公网端口资产和访问样本；本模块不会执行封禁或修改防火墙。'),
             E('h4', {}, '公网 DNAT 服务资产（最多 100 项）'),
             table(
                 ['地址族', '协议', '公网端口', '服务名称', '分类', '内网目标', '状态'],
@@ -1106,7 +1168,10 @@ function guardPanel() {
         busy = true;
         refreshButton.disabled = true;
         dom.content(result, '正在读取敏感端口资产和访问样本……');
-        getGuardOverview(period.value, Number(portFilter.value || 0)).then(function(data) {
+        getGuardOverview(
+            period.value, Number(portFilter.value || 0),
+            alertRuleFilter.value, alertSeverityFilter.value
+        ).then(function(data) {
             render(data);
         }).catch(function(error) {
             dom.content(result, E('p', { 'class': 'gw-error' },
@@ -1120,12 +1185,16 @@ function guardPanel() {
     refreshButton.addEventListener('click', refresh);
     period.addEventListener('change', refresh);
     portFilter.addEventListener('change', refresh);
+    alertRuleFilter.addEventListener('change', refresh);
+    alertSeverityFilter.addEventListener('change', refresh);
     refresh();
 
     return panel('公网敏感端口防护（观察模式）', [
         E('div', { 'class': 'gw-guard-controls' }, [
             E('label', {}, ['统计范围', period]),
             E('label', {}, ['公网原始端口', portFilter]),
+            E('label', {}, ['告警规则', alertRuleFilter]),
+            E('label', {}, ['风险等级', alertSeverityFilter]),
             refreshButton
         ]),
         result,

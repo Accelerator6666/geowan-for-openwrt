@@ -24,6 +24,13 @@ def make_database(path, now, ports, country_code="CN", runtime_mode="observe"):
         ("8.8.8.8", country_code, "测试国家", "测试地区",
          "测试城市", 64500, "Example Network")
     )
+    conn.execute("""
+        CREATE TABLE bans(
+            ip TEXT PRIMARY KEY,family INTEGER NOT NULL,
+            first_seen INTEGER NOT NULL,last_seen INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL
+        )
+    """)
     runtime = {
         "enabled": runtime_mode == "observe",
         "mode": runtime_mode,
@@ -59,6 +66,17 @@ def make_database(path, now, ports, country_code="CN", runtime_mode="observe"):
     return conn
 
 
+def add_event(conn, event_id, ts, src, public_port, service_id,
+              src_port=45000):
+    conn.execute(
+        "INSERT INTO guard_events VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            event_id, ts, 4, src, src_port, public_port, "TCP",
+            "10.0.0.61", 443, service_id, "kernel_log_sample"
+        )
+    )
+
+
 class GuardAlertTests(unittest.TestCase):
     def write_policy(self, path, **values):
         policy = {
@@ -84,18 +102,19 @@ class GuardAlertTests(unittest.TestCase):
             result = evaluate_guard_alerts(conn, now=now, policy_path=policy)
             row = conn.execute("""
                 SELECT rule_id,severity,src,unique_public_ports,public_ports,
-                       occurrence_count,last_alert_at
+                       occurrence_count,last_alert_at,risk_score
                 FROM guard_alerts
             """).fetchone()
 
             self.assertEqual(result["created"], 1)
             self.assertEqual(row[0], "multi_port_access")
-            self.assertEqual(row[1], "notice")
+            self.assertEqual(row[1], "low")
             self.assertEqual(row[2], "8.8.8.8")
             self.assertEqual(row[3], 3)
             self.assertEqual(json.loads(row[4]), [20443, 31080, 58964])
             self.assertEqual(row[5], 1)
             self.assertEqual(row[6], now)
+            self.assertEqual(row[7], 35)
             conn.close()
 
     def test_two_public_ports_do_not_create_alert(self):
@@ -187,6 +206,196 @@ class GuardAlertTests(unittest.TestCase):
         self.assertIn('rm -rf /usr/libexec/geowan-console', uninstall)
         self.assertNotIn('rm -f /etc/geowan-console/guard-alert-policy.json', uninstall)
 
+    def test_high_frequency_same_source_same_service_creates_medium_alert(self):
+        now = 1800000000
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_database(Path(tmp) / "db.sqlite", now, [20443])
+            for index in range(19):
+                add_event(
+                    conn, "freq-%d" % index, now - 110 + index * 5,
+                    "8.8.8.8", 20443, "service-0", 46000 + index
+                )
+            result = evaluate_guard_alerts(conn, now=now)
+            row = conn.execute("""
+                SELECT rule_id,severity,risk_score,target_port,sample_count
+                FROM guard_alerts WHERE rule_id='high_frequency_access'
+            """).fetchone()
+            self.assertEqual(result["created"], 1)
+            self.assertEqual(
+                row, ("high_frequency_access", "medium", 60, 20443, 20)
+            )
+            conn.close()
+
+    def test_many_sources_targeting_one_public_port_creates_low_alert(self):
+        now = 1800000000
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_database(Path(tmp) / "db.sqlite", now, [20443])
+            for index in range(1, 8):
+                ip = "203.0.113.%d" % index
+                conn.execute(
+                    "INSERT INTO geoip_cache VALUES(?,?,?,?,?,?,?)",
+                    (ip, "CN", "测试国家", "", "", None, "")
+                )
+                for sample in range(2):
+                    add_event(
+                        conn, "target-%d-%d" % (index, sample),
+                        now - 100 + sample * 10, ip, 20443, "service-0",
+                        47000 + index * 10 + sample
+                    )
+            result = evaluate_guard_alerts(conn, now=now)
+            row = conn.execute("""
+                SELECT rule_id,severity,risk_score,target_port,sample_count,
+                       details_json
+                FROM guard_alerts WHERE rule_id='multi_source_target'
+            """).fetchone()
+            self.assertEqual(result["created"], 1)
+            self.assertEqual(
+                row[:5], ("multi_source_target", "low", 40, 20443, 15)
+            )
+            self.assertEqual(json.loads(row[5])["source_count"], 8)
+            conn.close()
+
+    def test_active_blacklist_source_access_creates_high_alert(self):
+        now = 1800000000
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_database(Path(tmp) / "db.sqlite", now, [20443])
+            conn.execute(
+                "INSERT INTO bans VALUES(?,?,?,?,?)",
+                ("8.8.8.8", 4, now - 500, now - 20, now + 3600)
+            )
+            add_event(conn, "ban-hit-2", now - 10, "8.8.8.8",
+                      20443, "service-0", 48001)
+            result = evaluate_guard_alerts(conn, now=now)
+            row = conn.execute("""
+                SELECT rule_id,severity,risk_score,details_json
+                FROM guard_alerts WHERE rule_id='active_blacklist_access'
+            """).fetchone()
+            self.assertEqual(result["created"], 1)
+            self.assertEqual(
+                row[:3], ("active_blacklist_access", "high", 75)
+            )
+            self.assertEqual(
+                json.loads(row[3])["active_ban_expires_at"], now + 3600
+            )
+            conn.close()
+
+    def test_same_asn_multiple_sources_creates_low_context_alert(self):
+        now = 1800000000
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_database(Path(tmp) / "db.sqlite", now, [20443])
+            for index in range(1, 4):
+                ip = "198.51.100.%d" % index
+                conn.execute(
+                    "INSERT INTO geoip_cache VALUES(?,?,?,?,?,?,?)",
+                    (ip, "US", "测试国家", "", "", 64500, "Example Network")
+                )
+                for sample in range(3):
+                    add_event(
+                        conn, "asn-%d-%d" % (index, sample),
+                        now - 100 + sample * 10, ip, 20443, "service-0",
+                        49000 + index * 10 + sample
+                    )
+            result = evaluate_guard_alerts(conn, now=now)
+            row = conn.execute("""
+                SELECT rule_id,severity,risk_score,details_json
+                FROM guard_alerts WHERE rule_id='asn_multi_source'
+            """).fetchone()
+            self.assertEqual(result["created"], 1)
+            self.assertEqual(row[:3], ("asn_multi_source", "low", 30))
+            details = json.loads(row[3])
+            self.assertEqual(details["asn"], 64500)
+            self.assertEqual(details["source_count"], 4)
+            conn.close()
+
+    def test_v061_alert_schema_is_migrated_additively(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "legacy.sqlite")
+            conn.execute("""
+                CREATE TABLE guard_alerts(
+                    alert_id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'notice',src TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,first_seen INTEGER NOT NULL,
+                    last_seen INTEGER NOT NULL,last_alert_at INTEGER NOT NULL,
+                    window_start INTEGER NOT NULL,window_seconds INTEGER NOT NULL,
+                    sample_count INTEGER NOT NULL,unique_public_ports INTEGER NOT NULL,
+                    public_ports TEXT NOT NULL DEFAULT '[]',
+                    occurrence_count INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            conn.execute(
+                "INSERT INTO guard_alerts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("legacy", "multi_port_access", "notice", "8.8.8.8",
+                 1, 1, 1, 1, 0, 600, 3, 3, "[1,2,3]", 1)
+            )
+            ensure_guard_schema(conn)
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(guard_alerts)")
+            }
+            self.assertTrue({
+                "target_port", "details_json", "risk_score", "risk_factors"
+            } <= columns)
+            self.assertEqual(
+                conn.execute("SELECT alert_id FROM guard_alerts").fetchone()[0],
+                "legacy"
+            )
+            conn.close()
+
+    def test_guard_overview_filters_alert_rule_and_severity(self):
+        now = 1800000000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = make_database(root / "db.sqlite", now,
+                                 [20443, 31080, 58964])
+            conn.execute(
+                "INSERT INTO bans VALUES(?,?,?,?,?)",
+                ("8.8.8.8", 4, now - 500, now - 20, now + 3600)
+            )
+            add_event(conn, "filter-ban-hit", now - 10, "8.8.8.8",
+                      20443, "service-0", 50001)
+            evaluate_guard_alerts(conn, now=now)
+            conn.commit()
+            conn.close()
+            config = root / "guard.json"
+            config.write_text(json.dumps({
+                "enabled": True, "mode": "observe",
+                "log_rate_per_second": 2, "log_burst": 10
+            }), encoding="utf-8")
+            high = guard_overview(
+                {"period": "24h", "alert_severity": "high"},
+                db_path=root / "db.sqlite", now=now, config_path=config
+            )
+            rule = guard_overview(
+                {"period": "24h", "alert_rule": "active_blacklist_access"},
+                db_path=root / "db.sqlite", now=now, config_path=config
+            )
+            low = guard_overview(
+                {"period": "24h", "alert_severity": "low"},
+                db_path=root / "db.sqlite", now=now, config_path=config
+            )
+            self.assertEqual(
+                [x["rule_id"] for x in high["alerts"]],
+                ["active_blacklist_access"]
+            )
+            self.assertEqual(
+                [x["rule_id"] for x in rule["alerts"]],
+                ["active_blacklist_access"]
+            )
+            self.assertEqual(
+                [x["rule_id"] for x in low["alerts"]],
+                ["multi_port_access"]
+            )
+            self.assertEqual(high["selected_alert_severity"], "high")
+
+    def test_guard_overview_rejects_invalid_alert_filters(self):
+        self.assertEqual(
+            guard_overview({"period": "24h", "alert_rule": "not-a-rule"}),
+            {"error": "invalid_alert_rule"}
+        )
+        self.assertEqual(
+            guard_overview({"period": "24h", "alert_severity": "critical"}),
+            {"error": "invalid_alert_severity"}
+        )
+
     def test_guard_overview_returns_geoip_enriched_alerts(self):
         now = 1800000000
         with tempfile.TemporaryDirectory() as tmp:
@@ -211,6 +420,8 @@ class GuardAlertTests(unittest.TestCase):
             self.assertEqual(data["alerts"][0]["src"], "8.8.8.8")
             self.assertEqual(data["alerts"][0]["country_code"], "CN")
             self.assertEqual(data["alerts"][0]["asn"], 64500)
+            self.assertEqual(data["alerts"][0]["risk_score"], 35)
+            self.assertEqual(data["alerts"][0]["severity"], "low")
             self.assertEqual(json.loads(data["alerts"][0]["public_ports"]),
                              [20443, 31080, 58964])
 

@@ -156,5 +156,100 @@ class AgentTests(unittest.TestCase):
                 conn.close()
 
 
+    def test_monitor_cycle_passes_boot_id_as_keyword_not_log_lines(self):
+        from contextlib import ExitStack
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = mock.Mock()
+            state = {
+                "sizes": {"4": 0, "6": 0},
+                "errors": [],
+                "last_inventory": 1,
+                "last_inventory_mono": 100.0,
+                "last_log_mono": 0.0,
+                "last_geoip_mono": 100.0,
+                "last_geoip_cleanup_mono": 100.0,
+                "geoip_resolver": None,
+                "guard_runtime": {"enabled": True},
+            }
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(
+                    g, "COLLECT_LOCK", Path(tmp) / "collect.lock"
+                ))
+                stack.enter_context(mock.patch.object(
+                    g.time, "time", return_value=1800000000
+                ))
+                stack.enter_context(mock.patch.object(
+                    g.time, "monotonic", return_value=100.0
+                ))
+                stack.enter_context(mock.patch.object(
+                    g, "boot_id", return_value="boot-test"
+                ))
+                stack.enter_context(mock.patch.object(g, "insert_log_samples"))
+                insert_guard = stack.enter_context(mock.patch.object(
+                    g, "insert_guard_log_samples", return_value=2
+                ))
+                stack.enter_context(mock.patch.object(
+                    g, "evaluate_guard_alerts", return_value={"enabled": True}
+                ))
+                stack.enter_context(mock.patch.object(
+                    g, "build_status", return_value={}
+                ))
+                stack.enter_context(mock.patch.object(g, "publish_status"))
+
+                self.assertTrue(g.monitor_cycle(state, conn))
+
+            insert_guard.assert_called_once_with(
+                conn, 1800000000, boot="boot-test"
+            )
+            self.assertEqual(state["guard_samples_inserted"], 2)
+
+
+    def test_collect_passes_boot_id_as_keyword_not_log_lines(self):
+        from contextlib import ExitStack
+
+        conn = sqlite3.connect(":memory:")
+        resolver = mock.Mock()
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                g.time, "time", return_value=1800000000
+            ))
+            stack.enter_context(mock.patch.object(g, "db_open", return_value=conn))
+            stack.enter_context(mock.patch.object(
+                g, "GeoIPResolver", return_value=resolver
+            ))
+            stack.enter_context(mock.patch.object(
+                g, "snapshot", return_value=({"4": 0, "6": 0}, [])
+            ))
+            stack.enter_context(mock.patch.object(g, "insert_log_samples"))
+            stack.enter_context(mock.patch.object(g, "enrich_pending"))
+            stack.enter_context(mock.patch.object(
+                g, "refresh_guard", return_value={"enabled": True}
+            ))
+            stack.enter_context(mock.patch.object(
+                g, "boot_id", return_value="boot-reconcile-test"
+            ))
+            insert_guard = stack.enter_context(mock.patch.object(
+                g, "insert_guard_log_samples", return_value=3
+            ))
+            stack.enter_context(mock.patch.object(g, "enrich_guard_sources"))
+            stack.enter_context(mock.patch.object(
+                g, "evaluate_guard_alerts", return_value={"enabled": True}
+            ))
+            stack.enter_context(mock.patch.object(g, "cleanup_geoip_cache"))
+            stack.enter_context(mock.patch.object(
+                g, "build_status",
+                return_value={"active_bans": 0, "samples_24h": 0}
+            ))
+            stack.enter_context(mock.patch.object(g, "publish_status"))
+
+            g.collect()
+
+        insert_guard.assert_called_once_with(
+            conn, 1800000000, boot="boot-reconcile-test"
+        )
+        resolver.close.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

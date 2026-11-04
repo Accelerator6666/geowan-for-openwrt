@@ -421,7 +421,7 @@ def monitor_cycle(state, conn):
             state["last_inventory_mono"] = mono
         if state["last_log_mono"] == 0 or mono - state["last_log_mono"] >= LOG_SCAN_INTERVAL:
             insert_log_samples(conn, now)
-            state["guard_samples_inserted"] = insert_guard_log_samples(conn, now, boot_id())
+            state["guard_samples_inserted"] = insert_guard_log_samples(conn, now, boot=boot_id())
             resolver = state.get("geoip_resolver")
             if resolver and resolver.available:
                 state["guard_geoip_enriched"] = enrich_guard_sources(
@@ -513,7 +513,7 @@ def collect():
         insert_log_samples(conn, now)
         enrich_pending(conn, resolver, now, limit=250)
         guard_runtime = refresh_guard(conn, now)
-        guard_samples = insert_guard_log_samples(conn, now, boot_id())
+        guard_samples = insert_guard_log_samples(conn, now, boot=boot_id())
         enrich_guard_sources(conn, resolver, now, limit=100)
         guard_alert_summary = evaluate_guard_alerts(conn, now)
         cleanup_geoip_cache(conn, now)

@@ -137,17 +137,41 @@ def ensure_guard_schema(conn):
             sample_count INTEGER NOT NULL,
             unique_public_ports INTEGER NOT NULL,
             public_ports TEXT NOT NULL DEFAULT '[]',
-            occurrence_count INTEGER NOT NULL DEFAULT 1
+            occurrence_count INTEGER NOT NULL DEFAULT 1,
+            target_port INTEGER,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            risk_score INTEGER NOT NULL DEFAULT 0,
+            risk_factors TEXT NOT NULL DEFAULT '[]'
         );
         CREATE INDEX IF NOT EXISTS idx_guard_alerts_last_seen
             ON guard_alerts(last_seen DESC);
         CREATE INDEX IF NOT EXISTS idx_guard_alerts_src_rule
             ON guard_alerts(src,rule_id);
+        CREATE INDEX IF NOT EXISTS idx_guard_alerts_rule_last_seen
+            ON guard_alerts(rule_id,last_seen DESC);
         CREATE TABLE IF NOT EXISTS guard_state(
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
             updated_at INTEGER NOT NULL
         );
+    """)
+    # Additive migration from the v0.6.1 alert schema. Existing rows are retained.
+    alert_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(guard_alerts)")
+    }
+    for column, definition in (
+        ("target_port", "INTEGER"),
+        ("details_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("risk_score", "INTEGER NOT NULL DEFAULT 0"),
+        ("risk_factors", "TEXT NOT NULL DEFAULT '[]'"),
+    ):
+        if column not in alert_columns:
+            conn.execute(
+                "ALTER TABLE guard_alerts ADD COLUMN " + column + " " + definition
+            )
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_guard_alerts_rule_last_seen
+        ON guard_alerts(rule_id,last_seen DESC)
     """)
     conn.commit()
 
@@ -823,6 +847,18 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
     period = request.get("period", "24h")
     if not isinstance(period, str) or period not in PERIODS:
         return {"error": "invalid_period"}
+    alert_rule = request.get("alert_rule", "all")
+    valid_alert_rules = {
+        "all", "multi_port_access", "high_frequency_access",
+        "multi_source_target", "active_blacklist_access", "asn_multi_source"
+    }
+    if not isinstance(alert_rule, str) or alert_rule not in valid_alert_rules:
+        return {"error": "invalid_alert_rule"}
+    alert_severity = request.get("alert_severity", "all")
+    if not isinstance(alert_severity, str) or alert_severity not in {
+        "all", "notice", "low", "medium", "high"
+    }:
+        return {"error": "invalid_alert_severity"}
     raw_port = request.get("public_port", 0)
     if isinstance(raw_port, bool):
         return {"error": "invalid_port"}
@@ -924,18 +960,27 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
                 ORDER BY e.ts DESC LIMIT 60
             """, [since, now] + filter_params).fetchall()
         ]
+        alert_where = ["a.last_seen>=?", "a.last_seen<=?"]
+        alert_params = [since, now]
+        if alert_rule != "all":
+            alert_where.append("a.rule_id=?")
+            alert_params.append(alert_rule)
+        if alert_severity != "all":
+            alert_where.append("a.severity=?")
+            alert_params.append(alert_severity)
         alerts = [
             dict(row) for row in conn.execute("""
                 SELECT a.alert_id,a.rule_id,a.severity,a.src,a.created_at,
                        a.first_seen,a.last_seen,a.last_alert_at,a.window_start,
                        a.window_seconds,a.sample_count,a.unique_public_ports,
-                       a.public_ports,a.occurrence_count,
+                       a.public_ports,a.occurrence_count,a.target_port,
+                       a.details_json,a.risk_score,a.risk_factors,
                        g.country_code,g.country_name,g.region,g.city,g.asn,g.asn_org
                 FROM guard_alerts a
                 LEFT JOIN geoip_cache g ON g.ip=a.src
-                WHERE a.last_seen>=? AND a.last_seen<=?
-                ORDER BY a.last_seen DESC LIMIT 50
-            """, (since, now)).fetchall()
+                WHERE """ + " AND ".join(alert_where) + """
+                ORDER BY a.last_seen DESC,a.risk_score DESC LIMIT 100
+            """, alert_params).fetchall()
         ]
         bucket_counts = dict(conn.execute("""
             SELECT CAST(e.ts / ? AS INTEGER) AS bucket_index,COUNT(*)
@@ -953,6 +998,8 @@ def guard_overview(request, db_path=DB, now=None, config_path=None):
             "period": period,
             "period_label": PERIODS[period]["label"],
             "selected_public_port": public_port,
+            "selected_alert_rule": alert_rule,
+            "selected_alert_severity": alert_severity,
             "from_ts": since,
             "to_ts": now,
             "bucket_seconds": bucket,
