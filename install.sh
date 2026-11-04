@@ -60,7 +60,15 @@ fi
 if PYTHONPATH="$BASE/agent" /usr/bin/python3 - <<'PY'
 from geowan_enforce import validate_enforcement_rules
 result = validate_enforcement_rules()
-print("Global sensitive-port preflight passed:", result)
+print("Global sensitive-port preflight passed:", {
+    "mode": result["mode"],
+    "protected_port_count": result["protected_port_count"],
+    "exception_port_count": result["exception_port_count"],
+    "active_redirect_count": result["active_redirect_count"],
+    "conflict_count": result["conflict_count"],
+    "ban_seconds": result["ban_seconds"],
+    "exception_ports": result["exception_ports"],
+})
 PY
 then
     :

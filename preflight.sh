@@ -151,6 +151,16 @@ print("Exception tuples:", result["exception_port_count"])
 print("Active WAN redirects:", result["active_redirect_count"])
 print("Conflicting redirects:", result["conflict_count"])
 print("Default ban TTL:", result["ban_seconds"], "seconds")
+print("RDP / SSLVPN exceptions:")
+for item in result["exception_ports"]:
+    print("  IPv%d %s/%d - %s" % (
+        item["family"], item["proto"].upper(), item["port"], item["label"]
+    ))
+print("Protected ports:")
+for item in result["protected_ports"]:
+    print("  IPv%d %s/%d - %s" % (
+        item["family"], item["proto"].upper(), item["port"], item["label"]
+    ))
 print("nft -c INPUT/FORWARD check: PASS (no rules applied)")
 PY
 then
