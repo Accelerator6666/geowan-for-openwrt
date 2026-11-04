@@ -1,8 +1,8 @@
-# GeoWAN for OpenWrt — GeoWAN Console v0.6.0（开发预览）
+# GeoWAN for OpenWrt — GeoWAN Console v0.7.0（开发预览）
 
 为 **OpenWrt 25.12 / firewall4 / nftables** 设计的独立 GeoIP 防护可视化和持久化伴侣，中文 LuCI 页面，无额外监听端口。
 
-> **状态：v0.6.0 开发预览；Sensitive Port Guard 尚未完成目标路由器实机验收。请先备份，按只读预检和分阶段测试流程部署。**
+> **状态：v0.7.0 开发预览；全局敏感端口封禁尚未完成目标路由器实机验收。默认 observe，不会自动封禁。先备份并核对例外端口，再分阶段启用。**
 > 原有 GeoWAN GeoIP 过滤与 DNAT 保持不变。v0.6.0 新增独立的 log/counter-only 观察链 `geo_guard_forward`，不改变 ACCEPT/DROP/REJECT 决策，不启用自动封禁。
 
 ## 功能
@@ -16,7 +16,9 @@
 - LuCI 提供任意公网 IPv4/IPv6 查询入口，通过只读 rpcd ubus 方法查询本地 MMDB 或已缓存结果，不开放新的 HTTP/TCP/UDP 端口。
 - v0.2.2 增加黑名单分页、筛选、IP 详情及采样事件查询；v0.3.0 增加最近 1 小时、24 小时、7 天、30 天的只读趋势分析，并提供首版黑名单查询界面；v0.4.0 优化黑名单管理体验，增加 20/50/100 条分页、首页/末页导航、首次发现/最近日志样本/剩余封禁时间列、详情关闭和过期状态提示；所有 RPC 方法均为只读，并受 LuCI ACL 控制。
 - v0.5.0 增加只读来源 IP 画像、ASN / 网络组织画像和跨来源关联线索；支持 1 小时、24 小时、7 天、30 天范围。v0.5.1 修复滚动窗口导致的时间桶漂移，统一使用固定 UTC Unix epoch 时间边界；关联簇增加国家/地区、ASN 数量及分布，并返回最多 100 个来源 IP 的明细；来源列表或超过 50 项的国家 / ASN 分布会明确标记截断。评分不是威胁情报信誉分，不将国家、城市或 ASN 名称作为恶意证据，不触发防火墙动作。
-- v0.6.0 新增 Sensitive Port Guard：从本机 UCI redirect 与运行时 `dstnat_wan` 交叉发现公网服务，识别地址族、TCP/UDP、公网原始端口、DNAT 后端和映射冲突；通过独立 `geo_guard_forward` 链观察所有 WAN 来源访问公网 DNAT 服务的 NEW/DNAT 流量，按公网原始端口归属，保存独立 `guard_events` 样本，并通过本地 GeoIP 缓存区分国内/海外来源。LuCI 提供服务资产、端口排行、来源排行、端口筛选和最近事件。默认仅观察，日志限速，样本不是完整连接数；冲突映射不生成采集规则。Guard 事件最多保留 200,000 条或 30 天。
+- v0.6.0/v0.6.2 Sensitive Port Guard 与多维度行为告警保留：观察活动 WAN DNAT、采样访问事件，并在 LuCI 展示来源画像和行为告警。告警仍是分析线索，不参与封禁决策。
+- v0.7.0 新增 Global Sensitive-Port Enforcement：独立检查 WAN INPUT + FORWARD，使用 conntrack 原始目的端口同时匹配 DNAT 与非 DNAT 流量，覆盖 IPv4/IPv6、TCP/UDP；所有活动 WAN DNAT 映射默认纳入保护，另有 Synology、SSH、SMB、数据库、Docker、Proxmox 等常见非 DNAT 敏感端口清单。任意来源（包括中国 IP）首次命中敏感端口即在 nftables 内核路径加入独立的全局源 IP 动态封禁集合并 DROP，默认 7 天；RDP/SSLVPN 例外默认使用公网 TCP/UDP 58964、20443，并自动识别 RDP 后端 3389 与命名为 SSLVPN 的转发/放行规则。例外仅绕过 Guard 的触发和全局封禁，不覆盖既有 GeoWAN 国家过滤或其他防火墙策略。
+- v0.7.0 初次安装默认 observe，不执行 DROP；必须先核对本机 RDP/SSLVPN 例外端口、敏感端口清单和 nft -c 预检，再将 /etc/geowan-console/enforcement.json 的 mode 改为 enforce。Guard 独立集合和 SQLite 表与既有 geo_black4/6、bans 表隔离。
 - 不在 LAN/WAN 开放新端口，不将日志发布到公网，不需要 Node/npm、Docker 或独立 Web 服务。
 
 ## 运行要求

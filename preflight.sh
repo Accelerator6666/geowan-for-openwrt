@@ -16,13 +16,13 @@ fw4 -V 2>&1 | head -n 2 || true
 
 echo
 echo "===== SOURCE CHECKOUT ====="
-if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ] && [ -f "$BASE/guard-alert-policy.example.json" ]; then
+if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] && [ -f "$BASE/agent/geowan_enforce.py" ] && [ -f "$BASE/agent/geowan_rpc.py" ] && [ -f "$BASE/guard-alert-policy.example.json" ] && [ -f "$BASE/enforcement.example.json" ]; then
     if /usr/bin/python3 -m py_compile "$BASE"/agent/*.py "$BASE/rpcd/geowan"; then
         pass "GeoWAN Python source syntax"
     else
         fail "GeoWAN Python source syntax"
     fi
-    if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts'; then
+    if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts, geowan_enforce'; then
         pass "GeoWAN alert module import"
     else
         fail "GeoWAN alert module import"
@@ -139,6 +139,26 @@ then
 else
     fail "Sensitive Port Guard nft syntax"
 fi
+echo
+echo "===== GLOBAL SENSITIVE-PORT ENFORCEMENT PREFLIGHT (NO APPLY) ====="
+if PYTHONPATH="$BASE/agent" /usr/bin/python3 - <<'PY'
+from geowan_enforce import validate_enforcement_rules
+result = validate_enforcement_rules()
+print("WAN device:", result["wan_device"])
+print("Mode:", result["mode"])
+print("Protected tuples:", result["protected_port_count"])
+print("Exception tuples:", result["exception_port_count"])
+print("Active WAN redirects:", result["active_redirect_count"])
+print("Conflicting redirects:", result["conflict_count"])
+print("Default ban TTL:", result["ban_seconds"], "seconds")
+print("nft -c INPUT/FORWARD check: PASS (no rules applied)")
+PY
+then
+    pass "Global sensitive-port INPUT/FORWARD nft syntax"
+else
+    fail "Global sensitive-port INPUT/FORWARD nft syntax"
+fi
+
 echo
 echo "===== GUARD CHAIN (READ ONLY) ====="
 if nft list chain inet fw4 geo_guard_forward 2>/dev/null; then
