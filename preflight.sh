@@ -27,7 +27,7 @@ if [ -f "$BASE/agent/geowan_profile.py" ] && [ -f "$BASE/agent/geowan_guard.py" 
     else
         fail "GeoWAN alert module import"
     fi
-    if "$BASE/rpcd/geowan" list | /usr/bin/python3 -c '
+    if /usr/bin/python3 "$BASE/rpcd/geowan" list | /usr/bin/python3 -c '
 import json,sys
 d=json.load(sys.stdin)
 required={"lookup","list_bans","get_ban","analytics","source_profile","asn_profile","correlations","guard_overview"}
