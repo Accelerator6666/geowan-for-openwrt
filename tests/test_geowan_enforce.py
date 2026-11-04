@@ -328,7 +328,7 @@ config rule 'legacy_fgtvm_sslvpn'
             )
         lines.append(" }")
         lines.append("}")
-        output = "\\n".join(lines)
+        output = "\n".join(lines)
         runner = lambda *args: output
         self.assertTrue(enforce._chain_rules_match(
             name, "input", policy, runner
@@ -337,7 +337,7 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertFalse(enforce._chain_rules_match(
             name, "input", policy, lambda *args: missing
         ))
-        extra = output + '\\n  counter packets 0 bytes 0'
+        extra = output + '\n  counter packets 0 bytes 0'
         self.assertFalse(enforce._chain_rules_match(
             name, "input", policy, lambda *args: extra
         ))
@@ -395,7 +395,7 @@ config rule 'legacy_fgtvm_sslvpn'
                         'log prefix "%s" level info' % marker
                     )
                 lines.extend([" }", "}"])
-                chain_outputs[name] = "\\n".join(lines)
+                chain_outputs[name] = "\n".join(lines)
 
             calls = []
             def runner(*args, input_text=None):
