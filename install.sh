@@ -2,8 +2,9 @@
 # Install the companion dashboard; existing GeoWAN / DNAT rules untouched.
 set -eu
 BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-[ -f "$BASE/agent/geowan_agent.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] || {
-    echo "Run from the complete GeoWAN v0.6.1 project directory"
+[ -f "$BASE/agent/geowan_agent.py" ] && [ -f "$BASE/agent/geowan_alerts.py" ] && \
+[ -f "$BASE/agent/geowan_enforce.py" ] && [ -f "$BASE/enforcement.example.json" ] || {
+    echo "Run from the complete GeoWAN v0.7.0 project directory"
     exit 1
 }
 [ -x /sbin/fw4 ] || { echo "OpenWrt firewall4 required"; exit 1; }
@@ -15,7 +16,7 @@ BASE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
     echo "Missing Python SQLite module. Install python3-sqlite3."
     exit 1
 }
-if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts'; then
+if PYTHONPATH="$BASE/agent" /usr/bin/python3 -c 'import geowan_agent, geowan_alerts, geowan_enforce'; then
     :
 else
     echo "GeoWAN monitor/alert module import failed; installation stopped."
@@ -52,6 +53,27 @@ print("Guard nft check passed:", result)
     :
 else
     echo "Sensitive Port Guard nft syntax/preflight failed; installation stopped without applying rules."
+    exit 1
+fi
+
+# Syntax-check both INPUT and FORWARD enforcement chains without applying rules.
+if PYTHONPATH="$BASE/agent" /usr/bin/python3 - <<'PY'
+from geowan_enforce import validate_enforcement_rules
+result = validate_enforcement_rules()
+print("Global sensitive-port preflight passed:", {
+    "mode": result["mode"],
+    "protected_port_count": result["protected_port_count"],
+    "exception_port_count": result["exception_port_count"],
+    "active_redirect_count": result["active_redirect_count"],
+    "conflict_count": result["conflict_count"],
+    "ban_seconds": result["ban_seconds"],
+    "exception_ports": result["exception_ports"],
+})
+PY
+then
+    :
+else
+    echo "Global sensitive-port nft preflight failed; installation stopped without applying rules."
     exit 1
 fi
 
@@ -205,6 +227,12 @@ mkdir -p /usr/libexec/geowan-console \
     /etc/geowan-console /tmp/geowan-console
 chmod 700 /etc/geowan-console
 
+# v0.7 enforcement starts in observe mode. Preserve an operator-reviewed local policy.
+if [ ! -f /etc/geowan-console/enforcement.json ]; then
+    cp "$BASE/enforcement.example.json" /etc/geowan-console/enforcement.json
+fi
+chmod 600 /etc/geowan-console/enforcement.json
+
 # The Guard starts in observation-only mode. Preserve any existing local config.
 if [ ! -f /etc/geowan-console/guard.json ]; then
     cat > /etc/geowan-console/guard.json <<'EOF'
@@ -229,6 +257,7 @@ cp "$BASE/agent/geowan_geoip.py" /usr/libexec/geowan-console/geowan_geoip.py
 cp "$BASE/agent/geowan_profile.py" /usr/libexec/geowan-console/geowan_profile.py
 cp "$BASE/agent/geowan_guard.py" /usr/libexec/geowan-console/geowan_guard.py
 cp "$BASE/agent/geowan_alerts.py" /usr/libexec/geowan-console/geowan_alerts.py
+cp "$BASE/agent/geowan_enforce.py" /usr/libexec/geowan-console/geowan_enforce.py
 cp "$BASE/agent/geowan_rpc.py" /usr/libexec/geowan-console/geowan_rpc.py
 cp "$BASE/rpcd/geowan" /usr/libexec/rpcd/geowan
 cp "$BASE/scripts/task.sh" /usr/libexec/geowan-console/task.sh
@@ -241,7 +270,8 @@ cp "$BASE/luci/geowan.css" /www/luci-static/resources/geowan/geowan.css
 cp "$BASE/luci/menu.json" /usr/share/luci/menu.d/luci-app-geowan-console.json
 cp "$BASE/luci/acl.json" /usr/share/rpcd/acl.d/luci-app-geowan-console.json
 
-chmod 644 /usr/libexec/geowan-console/geowan_alerts.py
+chmod 644 /usr/libexec/geowan-console/geowan_alerts.py \
+    /usr/libexec/geowan-console/geowan_enforce.py
 chmod 700 /usr/libexec/geowan-console/agent.py \
     /usr/libexec/geowan-console/task.sh \
     /usr/libexec/geowan-console/update.sh \
@@ -269,9 +299,10 @@ rm -f /tmp/luci-indexcache
 /etc/init.d/geowan-monitor start
 echo "GeoWAN Console installed. Open LuCI -> Services -> GeoWAN 安全面板."
 echo "Database: /etc/geowan-console/telemetry.sqlite3"
-echo "Fast monitor: counters every 5s, blacklist inventory/log scan every 15s; 5-minute reconciliation remains enabled."
+echo "Fast monitor: counters every 5s; GeoWAN inventory/log scan every 15s; v0.7 first-hit ban-log persistence every 5s in enforce mode; 5-minute reconciliation remains enabled."
 if ! /usr/bin/python3 -c 'import maxminddb' >/dev/null 2>&1; then
     echo "GeoIP lookup is optional and inactive. Install with: apk add python3-maxminddb"
 fi
 echo "Existing GeoWAN rules/sets and DNAT are unchanged."
-echo "Guard adds only log/counter observation rules in inet fw4 geo_guard_forward; no ACCEPT/DROP/REJECT verdicts and no new listener."
+echo "v0.7 enforcement INPUT/FORWARD policy defaults to OBSERVE; no source blocking until enforcement.json mode is explicitly changed to enforce."
+echo "RDP/SSLVPN Guard exceptions default to public ports 58964 and 20443; verify these against the live UCI inventory before enforcement."

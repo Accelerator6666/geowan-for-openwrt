@@ -195,6 +195,9 @@ class AgentTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(
                     g, "build_status", return_value={}
                 ))
+                stack.enter_context(mock.patch.object(
+                    g, "enforcement_blocklist", return_value=[]
+                ))
                 stack.enter_context(mock.patch.object(g, "publish_status"))
 
                 self.assertTrue(g.monitor_cycle(state, conn))
@@ -227,6 +230,10 @@ class AgentTests(unittest.TestCase):
                 g, "refresh_guard", return_value={"enabled": True}
             ))
             stack.enter_context(mock.patch.object(
+                g, "refresh_enforcement",
+                return_value={"enabled": False, "mode": "disabled"}
+            ))
+            stack.enter_context(mock.patch.object(
                 g, "boot_id", return_value="boot-reconcile-test"
             ))
             insert_guard = stack.enter_context(mock.patch.object(
@@ -240,6 +247,9 @@ class AgentTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(
                 g, "build_status",
                 return_value={"active_bans": 0, "samples_24h": 0}
+            ))
+            stack.enter_context(mock.patch.object(
+                g, "enforcement_blocklist", return_value=[]
             ))
             stack.enter_context(mock.patch.object(g, "publish_status"))
 
