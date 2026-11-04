@@ -199,7 +199,7 @@ class EnforcementTests(unittest.TestCase):
         }]})
         self.assertEqual(
             enforce.parse_nft_set_members(output, 4),
-            {"180.98.41.231": 3600}
+            {"180.98.41.231": 3600, "10.0.0.1": 120}
         )
 
     def test_restore_missing_kernel_element_from_persistent_database(self):
