@@ -248,6 +248,9 @@ class AgentTests(unittest.TestCase):
                 g, "build_status",
                 return_value={"active_bans": 0, "samples_24h": 0}
             ))
+            stack.enter_context(mock.patch.object(
+                g, "enforcement_blocklist", return_value=[]
+            ))
             stack.enter_context(mock.patch.object(g, "publish_status"))
 
             g.collect()
