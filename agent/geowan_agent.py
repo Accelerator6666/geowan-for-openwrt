@@ -513,7 +513,7 @@ def collect():
         insert_log_samples(conn, now)
         enrich_pending(conn, resolver, now, limit=250)
         guard_runtime = refresh_guard(conn, now)
-        guard_samples = insert_guard_log_samples(conn, now, boot_id())
+        guard_samples = insert_guard_log_samples(conn, now, boot=boot_id())
         enrich_guard_sources(conn, resolver, now, limit=100)
         guard_alert_summary = evaluate_guard_alerts(conn, now)
         cleanup_geoip_cache(conn, now)
