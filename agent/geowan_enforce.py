@@ -695,6 +695,20 @@ def validate_enforcement_rules(command_runner=None, config_path=None):
         "mode": policy["mode"],
         "protected_port_count": len(policy["protected"]),
         "exception_port_count": len(policy["exceptions"]),
+        "protected_ports": [
+            {
+                "family": family, "proto": proto, "port": port,
+                "label": policy["protected_labels"].get((family, proto, port), "")
+            }
+            for family, proto, port in sorted(policy["protected"])
+        ],
+        "exception_ports": [
+            {
+                "family": family, "proto": proto, "port": port,
+                "label": policy["protected_labels"].get((family, proto, port), "")
+            }
+            for family, proto, port in sorted(policy["exceptions"])
+        ],
         "active_redirect_count": policy["active_redirect_count"],
         "conflict_count": policy["conflict_count"],
         "ban_seconds": policy["ban_seconds"],
