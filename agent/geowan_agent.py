@@ -303,11 +303,18 @@ def enrich_pending(conn, resolver, now=None, limit=250):
         return 0
     now = int(time.time()) if now is None else int(now)
     version = resolver.version
+    ensure_enforcement_schema(conn)
     rows = conn.execute(
-        "SELECT b.ip FROM bans b LEFT JOIN geoip_cache g ON g.ip=b.ip "
-        "WHERE b.expires_at>? AND (g.ip IS NULL OR g.database_version<>?) "
-        "ORDER BY b.first_seen,b.ip LIMIT ?",
-        (now, version, max(1, int(limit)))
+        "SELECT ip FROM ("
+        " SELECT b.ip AS ip,b.first_seen AS seen FROM bans b "
+        " LEFT JOIN geoip_cache g ON g.ip=b.ip "
+        " WHERE b.expires_at>? AND (g.ip IS NULL OR g.database_version<>?) "
+        " UNION "
+        " SELECT b.ip AS ip,b.first_seen AS seen FROM guard_bans b "
+        " LEFT JOIN geoip_cache g ON g.ip=b.ip "
+        " WHERE b.expires_at>? AND (g.ip IS NULL OR g.database_version<>?)"
+        ") ORDER BY seen,ip LIMIT ?",
+        (now, version, now, version, max(1, int(limit)))
     ).fetchall()
     saved = 0
     for (ip,) in rows:
@@ -366,6 +373,19 @@ def geoip_summary(conn, now):
         "WHERE b.expires_at>? AND (g.ip IS NULL OR g.database_version<>?)",
         (now, version)
     ).fetchone()[0]
+    guard_active = conn.execute(
+        "SELECT COUNT(*) FROM guard_bans WHERE expires_at>?", (now,)
+    ).fetchone()[0]
+    guard_resolved = conn.execute(
+        "SELECT COUNT(*) FROM guard_bans b JOIN geoip_cache g ON g.ip=b.ip "
+        "WHERE b.expires_at>? AND g.database_version=? AND g.lookup_status='ok'",
+        (now, version)
+    ).fetchone()[0]
+    guard_pending = conn.execute(
+        "SELECT COUNT(*) FROM guard_bans b LEFT JOIN geoip_cache g ON g.ip=b.ip "
+        "WHERE b.expires_at>? AND (g.ip IS NULL OR g.database_version<>?)",
+        (now, version)
+    ).fetchone()[0]
     countries = [{"code": code, "country": name, "ips": count} for code, name, count
                  in conn.execute(
         "SELECT g.country_code,g.country_name,COUNT(*) FROM bans b "
@@ -389,6 +409,9 @@ def geoip_summary(conn, now):
         "active_bans": active,
         "resolved_active_bans": resolved,
         "pending_active_bans": pending,
+        "guard_active_bans": guard_active,
+        "guard_resolved_active_bans": guard_resolved,
+        "guard_pending_active_bans": guard_pending,
         "top_countries": countries,
         "top_asns": asns
     }

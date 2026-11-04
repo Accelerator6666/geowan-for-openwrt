@@ -1189,7 +1189,7 @@ function guardPanel() {
     alertSeverityFilter.addEventListener('change', refresh);
     refresh();
 
-    return panel('公网敏感端口防护（观察模式）', [
+    return panel('公网 DNAT 服务观察与行为告警（v0.6）', [
         E('div', { 'class': 'gw-guard-controls' }, [
             E('label', {}, ['统计范围', period]),
             E('label', {}, ['公网原始端口', portFilter]),
@@ -1203,6 +1203,58 @@ function guardPanel() {
     ]);
 }
 
+function enforcementPanel(data) {
+    var runtime = data.guard_enforcement || {};
+    var bans = data.guard_blocklist || [];
+    var mode = runtime.mode || 'not_initialized';
+    var stateText = mode == 'enforce' && runtime.chain_installed ?
+        '强制封禁运行中' :
+        (mode == 'observe' && runtime.chain_installed ? '观察模式（不封禁）' :
+            (mode == 'degraded' ? '状态异常，保留已有规则' : '尚未启用'));
+    var stateClass = mode == 'enforce' && runtime.chain_installed ?
+        'gw-guard-state-ok' :
+        (mode == 'degraded' ? 'gw-guard-state-warn' : 'gw-guard-state-warn');
+    var rows = bans.map(function(item) {
+        var location = [item.country_name || item.country_code, item.city]
+            .filter(Boolean).join(' / ');
+        var asn = item.asn ? ('AS' + item.asn + ' ' + (item.asn_org || '')) : '—';
+        var path = item.path == 'input' ? 'INPUT' :
+            (item.path == 'forward' ? 'FORWARD' : '—');
+        return [
+            item.ip, 'IPv' + item.family, location || '待识别', asn,
+            item.trigger_port || '—', item.proto || '—', path,
+            timeString(item.expires_at)
+        ];
+    });
+    return panel('全局敏感端口封禁（GeoWAN v0.7.0）', [
+        E('div', { 'class': 'gw-guard-status ' + stateClass }, [
+            E('strong', {}, stateText),
+            E('span', {}, ' · WAN：' + (runtime.wan_device || '未识别')),
+            E('span', {}, ' · 默认封禁：' + durationString(runtime.ban_seconds || 604800)),
+            E('span', {}, ' · 受保护端口：' + (runtime.protected_port_count || 0)),
+            E('span', {}, ' · 例外端口：' + (runtime.exception_port_count || 0))
+        ]),
+        E('div', { 'class': 'gw-analytics-metrics gw-guard-metrics' }, [
+            card('活跃 Guard 封禁', runtime.active_bans || 0, '全局源 IP · 独立于国家黑名单'),
+            card('IPv4 内核集合', runtime.kernel_bans_v4 || 0, '动态 timeout set'),
+            card('IPv6 内核集合', runtime.kernel_bans_v6 || 0, '动态 timeout set'),
+            card('本周期写入封禁记录', data.guard_block_samples_inserted_last_cycle || 0, '内核首次命中日志同步')
+        ]),
+        table(
+            ['来源 IP', '地址族', 'GeoIP 国家 / 城市', 'ASN / 网络组织',
+                '触发端口', '协议', '路径', '封禁到期'],
+            rows
+        ),
+        runtime.last_error ?
+            E('p', { 'class': 'gw-error' }, 'Enforcement 错误：' + runtime.last_error) :
+            E('span'),
+        E('p', { 'class': 'gw-muted' },
+            '单次命中受保护敏感端口即由 nftables 内核路径加入全局源 IP 封禁集合并丢弃。'
+            + 'RDP/SSLVPN 例外端口绕过 Guard 触发和 Guard 全局封禁；既有 GeoWAN 国家过滤及其他防火墙策略仍然生效。'
+            + '当前列表最多显示 50 条活跃记录。')
+    ]);
+}
+
 function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode, guardNode) {
     var counters = d.counters || {};
     var total = (counters.black4 || 0) + (counters.geo4 || 0) +
@@ -1210,7 +1262,7 @@ function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode, guardNod
     var header = E('div', { 'class': 'gw-heading' }, [
         E('div', {}, [
             E('h2', {}, 'GeoWAN 安全防护'),
-            E('p', {}, 'OpenWrt firewall4 · WAN 入站观测 · 只读控制台')
+            E('p', {}, 'OpenWrt firewall4 · WAN 入站防护与安全观测')
         ]),
         E('span', { 'class': 'gw-status ' + (d.status == 'ok' ? 'ok' : 'warn') },
             d.status == 'ok' ? '采集正常' : '数据不完整')
@@ -1238,6 +1290,7 @@ function draw(d, lookupNode, blacklistNode, analyticsNode, profileNode, guardNod
         analyticsNode || E('span'),
         profileNode || E('span'),
         guardNode || E('span'),
+        enforcementPanel(d),
         E('div', { 'class': 'gw-columns' }, [
             panel('海外来源国家排行（活跃封禁 IP）', table(['国家', '国家代码', 'IP 数'],
                 (d.top_countries || []).map(function(r) { return [r.country, r.code, r.ips]; }))),

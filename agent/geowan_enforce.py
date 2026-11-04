@@ -894,11 +894,16 @@ def enforcement_blocklist(conn, now=None, limit=100):
         "last_seen": row[3], "expires_at": row[4],
         "trigger_port": row[5], "proto": row[6], "path": row[7],
         "dst": row[8], "reason": row[9],
+        "country_code": row[10] or "", "country_name": row[11] or "",
+        "city": row[12] or "", "asn": row[13], "asn_org": row[14] or "",
+        "lookup_status": row[15] or "pending",
     } for row in conn.execute("""
-        SELECT ip,family,first_seen,last_seen,expires_at,
-               trigger_port,proto,path,dst,reason
-        FROM guard_bans WHERE expires_at>?
-        ORDER BY last_seen DESC,ip LIMIT ?
+        SELECT b.ip,b.family,b.first_seen,b.last_seen,b.expires_at,
+               b.trigger_port,b.proto,b.path,b.dst,b.reason,
+               g.country_code,g.country_name,g.city,g.asn,g.asn_org,g.lookup_status
+        FROM guard_bans b LEFT JOIN geoip_cache g ON g.ip=b.ip
+        WHERE b.expires_at>?
+        ORDER BY b.last_seen DESC,b.ip LIMIT ?
     """, (now, max(1, min(1000, int(limit)))))]
 
 
