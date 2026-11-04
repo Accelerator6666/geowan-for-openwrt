@@ -306,6 +306,119 @@ config rule 'legacy_fgtvm_sslvpn'
             self.assertIn("180.98.41.231 timeout 3600s", add_call[0][-1])
             conn.close()
 
+    def test_chain_rules_match_detects_missing_or_extra_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                UCI, NFT, Path(tmp) / "missing.json", now=1800000000
+            )
+        name = enforce.INPUT_CHAIN
+        lines = [
+            "table inet fw4 {",
+            " chain %s {" % name,
+            '  type filter hook input priority filter - 2; policy accept;',
+            '  comment "%s";' % enforce.CHAIN_COMMENTS[name],
+        ]
+        for family, proto, port in sorted(policy["protected"]):
+            marker = "GEOWAN_SENS%d|I|%s|%d|" % (
+                family, proto.upper(), port
+            )
+            lines.append(
+                '  iifname "pppoe-wan" counter packets 0 bytes 0 '
+                'log prefix "%s" level info' % marker
+            )
+        lines.append(" }")
+        lines.append("}")
+        output = "\\n".join(lines)
+        runner = lambda *args: output
+        self.assertTrue(enforce._chain_rules_match(
+            name, "input", policy, runner
+        ))
+        missing = output.replace("GEOWAN_SENS4|I|TCP|41443|", "MISSING", 1)
+        self.assertFalse(enforce._chain_rules_match(
+            name, "input", policy, lambda *args: missing
+        ))
+        extra = output + '\\n  counter packets 0 bytes 0'
+        self.assertFalse(enforce._chain_rules_match(
+            name, "input", policy, lambda *args: extra
+        ))
+
+    def test_rules_fingerprint_changes_when_mode_or_policy_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(
+                UCI, NFT, Path(tmp) / "missing.json", now=1800000000
+            )
+        original = enforce._rules_fingerprint(policy, "pppoe-wan")
+        changed_mode = dict(policy, mode="enforce")
+        self.assertNotEqual(
+            original, enforce._rules_fingerprint(changed_mode, "pppoe-wan")
+        )
+        changed_ports = dict(policy, protected=set(policy["protected"]))
+        changed_ports["protected"].add((4, "tcp", 45555))
+        self.assertNotEqual(
+            original, enforce._rules_fingerprint(changed_ports, "pppoe-wan")
+        )
+
+    def test_refresh_skips_unchanged_enforcement_chain_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "missing.json"
+            db_path = Path(tmp) / "db.sqlite"
+            policy = enforce.build_policy(
+                UCI, NFT, config, now=1800000000
+            )
+            fingerprint = enforce._rules_fingerprint(policy, "pppoe-wan")
+            conn = sqlite3.connect(db_path)
+            enforce.ensure_enforcement_schema(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO guard_enforcement_state(key,value) "
+                "VALUES('rules_fingerprint',?)",
+                (fingerprint,)
+            )
+            conn.commit()
+
+            chain_outputs = {}
+            for name, hook, path_code in (
+                (enforce.INPUT_CHAIN, "input", "I"),
+                (enforce.FORWARD_CHAIN, "forward", "F"),
+            ):
+                lines = [
+                    "table inet fw4 {",
+                    " chain %s {" % name,
+                    "  type filter hook %s priority filter - 2; policy accept;" % hook,
+                    '  comment "%s";' % enforce.CHAIN_COMMENTS[name],
+                ]
+                for family, proto, port in sorted(policy["protected"]):
+                    marker = "GEOWAN_SENS%d|%s|%s|%d|" % (
+                        family, path_code, proto.upper(), port
+                    )
+                    lines.append(
+                        '  iifname "pppoe-wan" counter packets 0 bytes 0 '
+                        'log prefix "%s" level info' % marker
+                    )
+                lines.extend([" }", "}"])
+                chain_outputs[name] = "\\n".join(lines)
+
+            calls = []
+            def runner(*args, input_text=None):
+                calls.append((args, input_text))
+                if args == ("uci", "-q", "export", "firewall"):
+                    return UCI
+                if args == ("nft", "-a", "list", "chain", "inet", "fw4", "dstnat_wan"):
+                    return NFT
+                if args == ("ubus", "call", "network.interface.wan", "status"):
+                    return json.dumps({"l3_device": "pppoe-wan"})
+                if args[:5] == ("nft", "list", "chain", "inet", "fw4"):
+                    return chain_outputs[args[5]]
+                raise AssertionError("unexpected command: %r" % (args,))
+
+            result = enforce.refresh_enforcement(
+                conn, now=1800000000, config_path=config, command_runner=runner
+            )
+            self.assertEqual(result["mode"], "observe")
+            self.assertFalse(result["rules_refreshed"])
+            self.assertEqual(result["rules_fingerprint"], fingerprint)
+            self.assertFalse(any(args[:3] == ("nft", "-f", "-") for args, _ in calls))
+            conn.close()
+
     def test_invalid_wan_device_is_rejected(self):
         with self.assertRaises(ValueError):
             enforce.render_enforcement_script(
