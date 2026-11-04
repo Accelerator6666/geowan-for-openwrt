@@ -299,7 +299,7 @@ rm -f /tmp/luci-indexcache
 /etc/init.d/geowan-monitor start
 echo "GeoWAN Console installed. Open LuCI -> Services -> GeoWAN 安全面板."
 echo "Database: /etc/geowan-console/telemetry.sqlite3"
-echo "Fast monitor: counters every 5s, blacklist inventory/log scan every 15s; 5-minute reconciliation remains enabled."
+echo "Fast monitor: counters every 5s; GeoWAN inventory/log scan every 15s; v0.7 first-hit ban-log persistence every 5s in enforce mode; 5-minute reconciliation remains enabled."
 if ! /usr/bin/python3 -c 'import maxminddb' >/dev/null 2>&1; then
     echo "GeoIP lookup is optional and inactive. Install with: apk add python3-maxminddb"
 fi
