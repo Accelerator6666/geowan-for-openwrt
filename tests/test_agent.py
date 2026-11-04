@@ -195,6 +195,9 @@ class AgentTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(
                     g, "build_status", return_value={}
                 ))
+                stack.enter_context(mock.patch.object(
+                    g, "enforcement_blocklist", return_value=[]
+                ))
                 stack.enter_context(mock.patch.object(g, "publish_status"))
 
                 self.assertTrue(g.monitor_cycle(state, conn))
