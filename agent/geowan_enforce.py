@@ -46,10 +46,44 @@ SYSLOG_TIME = re.compile(
 )
 
 DEFAULT_HONEYPOT_PORTS = [
-    {"port": 21, "proto": "tcp", "family": "any", "label": "FTP probe"},
-    {"port": 23, "proto": "tcp", "family": "any", "label": "Telnet probe"},
-    {"port": 445, "proto": "tcp", "family": "any", "label": "SMB probe"},
+    {"port": 135, "proto": "tcp", "category": "windows", "label": "Windows RPC"},
+    {"port": 139, "proto": "tcp", "category": "windows", "label": "NetBIOS"},
+    {"port": 445, "proto": "tcp", "category": "windows", "label": "SMB"},
+    {"port": 3389, "proto": "tcp", "category": "windows", "label": "RDP"},
+    {"port": 3389, "proto": "udp", "category": "windows", "label": "RDP"},
+    {"port": 5985, "proto": "tcp", "category": "windows", "label": "WinRM HTTP"},
+    {"port": 5986, "proto": "tcp", "category": "windows", "label": "WinRM HTTPS"},
+    {"port": 1433, "proto": "tcp", "category": "windows", "label": "SQL Server"},
+    {"port": 21, "proto": "tcp", "category": "linux", "label": "FTP"},
+    {"port": 23, "proto": "tcp", "category": "linux", "label": "Telnet"},
+    {"port": 111, "proto": "tcp", "category": "linux", "label": "RPCbind"},
+    {"port": 111, "proto": "udp", "category": "linux", "label": "RPCbind"},
+    {"port": 873, "proto": "tcp", "category": "linux", "label": "rsync"},
+    {"port": 2049, "proto": "tcp", "category": "linux", "label": "NFS"},
+    {"port": 2049, "proto": "udp", "category": "linux", "label": "NFS"},
+    {"port": 3306, "proto": "tcp", "category": "linux", "label": "MySQL"},
+    {"port": 5432, "proto": "tcp", "category": "linux", "label": "PostgreSQL"},
+    {"port": 6379, "proto": "tcp", "category": "linux", "label": "Redis"},
+    {"port": 5000, "proto": "tcp", "category": "synology", "label": "DSM HTTP"},
+    {"port": 5001, "proto": "tcp", "category": "synology", "label": "DSM HTTPS"},
+    {"port": 5005, "proto": "tcp", "category": "synology", "label": "WebDAV HTTP"},
+    {"port": 5006, "proto": "tcp", "category": "synology", "label": "WebDAV HTTPS"},
+    {"port": 6690, "proto": "tcp", "category": "synology", "label": "Drive"},
+    {"port": 8080, "proto": "tcp", "category": "qnap", "label": "QTS management"},
+    {"port": 8081, "proto": "tcp", "category": "qnap", "label": "QNAP web server"},
+    {"port": 2375, "proto": "tcp", "category": "docker", "label": "Docker API HTTP"},
+    {"port": 2376, "proto": "tcp", "category": "docker", "label": "Docker API TLS"},
+    {"port": 9000, "proto": "tcp", "category": "docker", "label": "Portainer HTTP"},
+    {"port": 9443, "proto": "tcp", "category": "docker", "label": "Portainer HTTPS"},
+    {"port": 8096, "proto": "tcp", "category": "media", "label": "Jellyfin/Emby HTTP"},
+    {"port": 8920, "proto": "tcp", "category": "media", "label": "Jellyfin/Emby HTTPS"},
+    {"port": 32400, "proto": "tcp", "category": "media", "label": "Plex"},
 ]
+CATEGORY_NAMES = {
+    "windows": "Windows", "linux": "Linux", "synology": "群晖",
+    "qnap": "威联通", "docker": "Docker/容器", "media": "媒体服务",
+    "custom": "自定义",
+}
 DEFAULT_EXCEPTION_PORTS = [
     {"port": 20443, "proto": "tcp", "family": "any", "label": "SSLVPN"},
     {"port": 20443, "proto": "udp", "family": "any", "label": "SSLVPN"},
@@ -124,6 +158,7 @@ def _parse_port_entries(raw):
         raise ValueError("port_list_must_be_array")
     result = set()
     labels = {}
+    categories = {}
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("port_entry_must_be_object")
@@ -149,12 +184,16 @@ def _parse_port_entries(raw):
         else:
             continue
         label = str(item.get("label", "")).strip()[:80]
+        category = str(item.get("category", "custom")).strip().lower()
+        if category not in CATEGORY_NAMES:
+            category = "custom"
         for family in families:
             key = (family, proto, port)
             result.add(key)
             if label:
                 labels[key] = label
-    return result, labels
+            categories[key] = category
+    return result, labels, categories
 
 
 def read_policy(path=None):
@@ -195,10 +234,12 @@ def read_policy(path=None):
         policy["policy_error"] = "invalid_numeric_policy"
         return policy
     try:
-        policy["sensitive_set"], policy["sensitive_labels"] = _parse_port_entries(
+        (policy["sensitive_set"], policy["sensitive_labels"],
+         policy["sensitive_categories"]) = _parse_port_entries(
             raw.get("honeypot_ports", DEFAULT_HONEYPOT_PORTS)
         )
-        policy["exception_set"], policy["exception_labels"] = _parse_port_entries(
+        (policy["exception_set"], policy["exception_labels"],
+         _) = _parse_port_entries(
             raw.get("exception_ports", DEFAULT_EXCEPTION_PORTS)
         )
         policy["exception_set"].update(RESERVED_PORTS)
@@ -302,6 +343,28 @@ def _listening_ports():
     return result
 
 
+def _wan_accept_ports(uci_text):
+    """Treat explicit WAN ACCEPT destinations as business ports, not traps."""
+    result = set()
+    for rule in _parse_uci_sections(uci_text, {"rule"}):
+        if (rule.get("src") != "wan" or
+                str(rule.get("target", "")).upper() != "ACCEPT" or
+                str(rule.get("enabled", "1")).lower() in ("0", "false", "no")):
+            continue
+        ports = _parse_port_range(rule.get("dest_port"))
+        if not ports:
+            continue
+        raw_proto = str(rule.get("proto", "tcp")).lower().split()
+        protos = ("tcp", "udp") if "all" in raw_proto else _protos(rule)
+        family = str(rule.get("family", "any")).lower()
+        families = (4,) if family in ("ipv4", "4") else (
+            (6,) if family in ("ipv6", "6") else (4, 6)
+        )
+        result.update((fam, proto, port) for fam in families
+                      for proto in protos for port in ports)
+    return result
+
+
 def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None):
     policy = read_policy(config_path)
     if not policy["enabled"]:
@@ -315,6 +378,7 @@ def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None)
     protected = set(policy["sensitive_set"])
     exceptions = set(policy["exception_set"])
     protected_labels = dict(policy["sensitive_labels"])
+    protected_categories = dict(policy["sensitive_categories"])
     for key, label in policy["exception_labels"].items():
         protected_labels.setdefault(key, label)
 
@@ -325,7 +389,8 @@ def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None)
     # even when a stale local config still lists them.
     mapped = {(int(row["family"]), str(row["proto"]).lower(),
                int(row["public_port"])) for row in active}
-    in_use = mapped | (_listening_ports() if listening is None else set(listening))
+    in_use = (mapped | _wan_accept_ports(uci_text) |
+              (_listening_ports() if listening is None else set(listening)))
     skipped_in_use = sorted(protected & in_use)
     protected.difference_update(in_use)
     protected.difference_update(exceptions)
@@ -334,6 +399,7 @@ def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None)
         "protected": protected,
         "exceptions": exceptions,
         "protected_labels": protected_labels,
+        "protected_categories": protected_categories,
         "active_redirect_count": len(active),
         "conflict_count": len(conflicts),
         "conflicting_ports": sorted({
@@ -341,6 +407,20 @@ def build_policy(uci_text, nft_text, config_path=None, now=None, listening=None)
         }),
         "skipped_in_use": skipped_in_use,
     }
+
+
+def honeypot_groups(policy):
+    groups = {key: set() for key in CATEGORY_NAMES}
+    for family, proto, port in policy.get("protected", set()):
+        category = policy.get("protected_categories", {}).get(
+            (family, proto, port), "custom"
+        )
+        groups[category].add((proto, port))
+    return [{
+        "category": key, "name": name,
+        "ports": [{"proto": proto, "port": port}
+                  for proto, port in sorted(groups[key], key=lambda x: (x[1], x[0]))],
+    } for key, name in CATEGORY_NAMES.items() if groups[key]]
 
 
 def _safe_int(value):
@@ -691,8 +771,6 @@ def validate_enforcement_rules(command_runner=None, config_path=None):
     uci_text = runner("uci", "-q", "export", "firewall")
     nft_text = runner("nft", "-a", "list", "chain", "inet", "fw4", "dstnat_wan")
     policy = build_policy(uci_text, nft_text, config_path)
-    if policy["skipped_in_use"]:
-        raise RuntimeError("honeypot_port_is_active_redirect")
     for family in (4, 6):
         runner("nft", "list", "set", "inet", "fw4", "geo_cn%d" % family)
     wan = _wan_device(runner)
@@ -714,14 +792,17 @@ def validate_enforcement_rules(command_runner=None, config_path=None):
         "wan_device": wan,
         "mode": policy["mode"],
         "protected_port_count": len(policy["protected"]),
+        "skipped_in_use": policy["skipped_in_use"],
         "exception_port_count": len(policy["exceptions"]),
         "protected_ports": [
             {
                 "family": family, "proto": proto, "port": port,
-                "label": policy["protected_labels"].get((family, proto, port), "")
+                "label": policy["protected_labels"].get((family, proto, port), ""),
+                "category": policy["protected_categories"].get((family, proto, port), "custom")
             }
             for family, proto, port in sorted(policy["protected"])
         ],
+        "honeypot_groups": honeypot_groups(policy),
         "exception_ports": [
             {
                 "family": family, "proto": proto, "port": port,
@@ -836,6 +917,7 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
             "wan_device": wan,
             "protected_port_count": len(policy["protected"]),
             "honeypot_ports": sorted({port for _, _, port in policy["protected"]}),
+            "honeypot_groups": honeypot_groups(policy),
             "skipped_in_use": policy["skipped_in_use"],
             "exception_port_count": len(policy["exceptions"]),
             "active_redirect_count": policy["active_redirect_count"],
@@ -964,9 +1046,11 @@ def insert_block_log_samples(conn, now=None, lines=None, boot="unknown-boot",
     return inserted
 
 
-def enforcement_blocklist(conn, now=None, limit=100):
+def enforcement_blocklist(conn, now=None, limit=100, reason=None):
     now = int(time.time()) if now is None else int(now)
     ensure_enforcement_schema(conn)
+    if reason not in (None, "cn_honeypot", "sensitive_port_hit"):
+        raise ValueError("invalid_enforcement_reason")
     return [{
         "ip": row[0], "family": row[1], "first_seen": row[2],
         "last_seen": row[3], "expires_at": row[4],
@@ -980,9 +1064,27 @@ def enforcement_blocklist(conn, now=None, limit=100):
                b.trigger_port,b.proto,b.path,b.dst,b.reason,
                g.country_code,g.country_name,g.city,g.asn,g.asn_org,g.lookup_status
         FROM guard_bans b LEFT JOIN geoip_cache g ON g.ip=b.ip
-        WHERE b.expires_at>?
+        WHERE b.expires_at>? AND (? IS NULL OR b.reason=?)
         ORDER BY b.last_seen DESC,b.ip LIMIT ?
-    """, (now, max(1, min(1000, int(limit)))))]
+    """, (now, reason, reason, max(1, min(1000, int(limit)))))]
+
+
+def enforcement_cn_summary(conn, now=None):
+    """Separate new CN honeypot records from legacy global bans."""
+    now = int(time.time()) if now is None else int(now)
+    ensure_enforcement_schema(conn)
+    active, fresh, last = conn.execute("""
+        SELECT COUNT(*), COALESCE(SUM(first_seen>=?),0), MAX(last_seen)
+        FROM guard_bans WHERE reason='cn_honeypot' AND expires_at>?
+    """, (now - 86400, now)).fetchone()
+    legacy = conn.execute("""
+        SELECT COUNT(*) FROM guard_bans
+        WHERE reason!='cn_honeypot' AND expires_at>?
+    """, (now,)).fetchone()[0]
+    return {
+        "active_ips": active, "new_ips_24h": fresh,
+        "last_hit": last or 0, "legacy_active_ips": legacy,
+    }
 
 
 def enforcement_status(conn, now=None):

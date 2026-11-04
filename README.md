@@ -1,15 +1,15 @@
 # GeoWAN for OpenWrt — CN 蜜罐与黑名单
 
-面向 OpenWrt 25.12.x、firewall4 和 nftables。项目沿用已有的 GeoWAN 地域过滤规则：非 CN WAN 来源在 INPUT/FORWARD 被拒绝并进入 `geo_black4/6`；CN 来源访问明确配置的蜜罐端口时，由 nftables 在首个新建包上立即拒绝并加入 `geo_guard_ban4/6`。LuCI 只显示防护状态和封禁记录。
+面向 OpenWrt 25.12.x、firewall4 和 nftables。项目沿用已有的 GeoWAN 地域过滤规则：非 CN WAN 来源在 INPUT/FORWARD 被拒绝并进入 `geo_black4/6`；CN 来源访问明确配置的蜜罐端口时，由 nftables 在首个新建包上立即拒绝并加入 `geo_guard_ban4/6`。LuCI 分开显示 CN 蜜罐、海外来源与旧版封禁。
 
 ## 当前策略
 
-- 默认蜜罐：TCP 21、23、445。它们必须没有正常监听服务或公网端口映射；部署前需按自己的路由器核对。
+- 默认蜜罐按 Windows、Linux、群晖、威联通、Docker/容器及媒体服务分组，端口见 [示例配置](enforcement.example.json)。运行时自动跳过正在监听、有 WAN 端口映射或显式 WAN 放行规则的端口，并在预检与页面中列出；部署前仍需核对业务。目标设备正在监听的 22、80、443 没有被列为蜜罐。
 - 默认蜜罐模式为 `observe`。确认端口无业务后，才在 `/etc/geowan-console/enforcement.json` 中改为 `enforce`。
 - 31080、58964、20443 是保留的 NAT 业务端口，不参与蜜罐触发，也绕过 Guard 黑名单规则。已有 GeoWAN 地域过滤和其他防火墙规则仍按原配置工作。
 - 蜜罐只按已有的 `geo_cn4/6` nftables 集合识别 CN 来源，不依赖离线 MMDB 的查询结果。CN 集合表示网段归属，并不能证明访问者的真实位置。
 - Guard 封禁默认 7 天，后台把 nftables 动态集合持久化到 SQLite，并在 firewall4 重载或重启后恢复未到期记录。旧版 v0.7 产生的封禁保留到原到期时间。
-- 其他扫描和渗透行为只有出现明确可验证的触发信号才能自动封禁。单次访问真实业务端口不构成蜜罐命中；限速内核日志也不保证记录每次扫描。
+- 页面分别统计当前 CN 蜜罐 IP、近 24 小时新记录 CN IP、海外黑名单和旧版封禁；CN 指标依赖日志同步，可能落后于内核封禁集合。其他扫描和渗透行为只有出现明确可验证的触发信号才能自动封禁。单次访问真实业务端口不构成蜜罐命中。
 
 原来的来源画像、ASN 关联和多维告警代码仍在仓库中，暂不出现在简化后的首页，也不参与封禁决策。旧配置中的 `sensitive_ports`、`protect_all_active_redirects`、`auto_detect_rdp`、`auto_detect_sslvpn` 不再生成封禁规则。
 

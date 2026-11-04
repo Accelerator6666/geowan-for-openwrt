@@ -64,6 +64,7 @@ print("CN honeypot preflight passed:", {
     "mode": result["mode"],
     "protected_port_count": result["protected_port_count"],
     "exception_port_count": result["exception_port_count"],
+    "skipped_in_use": result["skipped_in_use"],
     "active_redirect_count": result["active_redirect_count"],
     "conflict_count": result["conflict_count"],
     "ban_seconds": result["ban_seconds"],

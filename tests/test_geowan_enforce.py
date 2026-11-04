@@ -59,6 +59,16 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn((4, "tcp", 20443), policy["exception_set"])
         self.assertIn((6, "tcp", 58964), policy["exception_set"])
 
+    def test_example_config_matches_default_honeypot_catalog(self):
+        example = Path(__file__).resolve().parents[1] / "enforcement.example.json"
+        policy = enforce.read_policy(example)
+        expected = {(family, item["proto"], item["port"])
+                    for family in (4, 6)
+                    for item in enforce.DEFAULT_HONEYPOT_PORTS}
+        self.assertEqual(policy["sensitive_set"], expected)
+        self.assertEqual({x["category"] for x in enforce.DEFAULT_HONEYPOT_PORTS},
+                         {"windows", "linux", "synology", "qnap", "docker", "media"})
+
     def test_default_policy_only_triggers_unused_honeypots(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = enforce.build_policy(
@@ -67,9 +77,15 @@ class EnforcementTests(unittest.TestCase):
         protected = policy["protected"]
         exceptions = policy["exceptions"]
         self.assertEqual(protected, {
-            (family, "tcp", port) for family in (4, 6)
-            for port in (21, 23, 445)
+            (family, entry["proto"], entry["port"])
+            for family in (4, 6)
+            for entry in enforce.DEFAULT_HONEYPOT_PORTS
         })
+        self.assertEqual({group["category"] for group in enforce.honeypot_groups(policy)},
+                         {"windows", "linux", "synology", "qnap", "docker", "media"})
+        self.assertNotIn((4, "tcp", 22), protected)
+        self.assertNotIn((4, "tcp", 80), protected)
+        self.assertNotIn((4, "tcp", 443), protected)
         self.assertNotIn((4, "tcp", 31080), protected)
         self.assertNotIn((4, "tcp", 58964), protected)
         self.assertNotIn((4, "tcp", 20443), protected)
@@ -93,8 +109,9 @@ class EnforcementTests(unittest.TestCase):
             policy = enforce.build_policy(UCI, NFT, path, now=1800000000,
                                           listening=set())
         self.assertEqual(policy["protected"], {
-            (family, "tcp", port) for family in (4, 6)
-            for port in (21, 23, 445)
+            (family, entry["proto"], entry["port"])
+            for family in (4, 6)
+            for entry in enforce.DEFAULT_HONEYPOT_PORTS
         })
         self.assertIn((4, "tcp", 31080), policy["exceptions"])
         self.assertIn((4, "udp", 31080), policy["exceptions"])
@@ -107,6 +124,31 @@ class EnforcementTests(unittest.TestCase):
             )
         self.assertNotIn((4, "tcp", 21), policy["protected"])
         self.assertIn((4, "tcp", 21), policy["skipped_in_use"])
+
+    def test_wan_accept_ports_are_skipped_but_disabled_rules_are_not(self):
+        uci = UCI + """
+config rule 'nas_allow'
+        option src 'wan'
+        option dest_port '5000-5001'
+        option proto 'tcp'
+        option family 'ipv4'
+        option target 'ACCEPT'
+
+config rule 'disabled_media'
+        option src 'wan'
+        option dest_port '8096'
+        option proto 'tcp'
+        option target 'ACCEPT'
+        option enabled '0'
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = enforce.build_policy(uci, NFT, Path(tmp) / "missing.json",
+                                          now=1800000000, listening=set())
+        for port in (5000, 5001):
+            self.assertNotIn((4, "tcp", port), policy["protected"])
+            self.assertIn((6, "tcp", port), policy["protected"])
+            self.assertIn((4, "tcp", port), policy["skipped_in_use"])
+        self.assertIn((4, "tcp", 8096), policy["protected"])
 
 
 
@@ -125,6 +167,7 @@ config rule 'allow_direct_rdp'
             )
         self.assertNotIn((4, "tcp", 3389), policy["protected"])
         self.assertNotIn((6, "tcp", 3389), policy["protected"])
+        self.assertIn((4, "tcp", 3389), policy["skipped_in_use"])
         self.assertNotIn((4, "tcp", 3389), policy["exceptions"])
         self.assertNotIn((6, "tcp", 3389), policy["exceptions"])
         # The public DNAT port targeting backend 3389 remains the RDP bypass.
@@ -212,7 +255,10 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertIn("hook forward priority -2", script)
         self.assertIn("ct original proto-dst 21", script)
         self.assertNotIn("ct original proto-dst 31080 update", script)
-        self.assertNotIn("ct original proto-dst 5001", script)
+        self.assertIn("ct original proto-dst 5001", script)
+        self.assertIn("ct original proto-dst 8080", script)
+        self.assertIn("ct original proto-dst 2375", script)
+        self.assertIn("ct original proto-dst 32400", script)
         self.assertIn("update @geo_guard_ban4", script)
         self.assertIn("update @geo_guard_ban6", script)
         self.assertIn('counter log prefix "GEOWAN_HONEY4|I|TCP|21|" level warn drop', script)
@@ -253,7 +299,7 @@ config rule 'legacy_fgtvm_sslvpn'
         self.assertFalse(any("proto-dst 20443" in line for line in trigger_lines))
         self.assertFalse(any("proto-dst 58964" in line for line in trigger_lines))
         self.assertFalse(any("proto-dst 31080" in line for line in trigger_lines))
-        self.assertFalse(any("proto-dst 3389" in line for line in trigger_lines))
+        self.assertTrue(any("proto-dst 3389" in line for line in trigger_lines))
         self.assertTrue(any("proto-dst 21" in line for line in trigger_lines))
 
     def test_parse_block_log_and_idempotent_database_persistence(self):
@@ -315,6 +361,25 @@ config rule 'legacy_fgtvm_sslvpn'
                 "SELECT reason FROM guard_bans WHERE ip='180.98.41.231'"
             ).fetchone()[0], "cn_honeypot")
             conn.close()
+
+    def test_cn_status_excludes_legacy_bans(self):
+        now = 1800000000
+        with sqlite3.connect(":memory:") as conn:
+            enforce.ensure_enforcement_schema(conn)
+            for ip, reason, first in (
+                ("1.1.1.1", "cn_honeypot", now - 60),
+                ("2.2.2.2", "cn_honeypot", now - 90000),
+                ("3.3.3.3", "sensitive_port_hit", now - 30),
+            ):
+                conn.execute("""
+                    INSERT INTO guard_bans(ip,family,first_seen,last_seen,expires_at,reason)
+                    VALUES(?,4,?,?,?,?)
+                """, (ip, first, now - 10, now + 3600, reason))
+            result = enforce.enforcement_cn_summary(conn, now)
+            self.assertEqual(result["active_ips"], 2)
+            self.assertEqual(result["new_ips_24h"], 1)
+            self.assertEqual(result["legacy_active_ips"], 1)
+            self.assertEqual(result["last_hit"], now - 10)
 
     def test_parse_nft_set_members_reads_remaining_timeout(self):
         output = json.dumps({"nftables": [{

@@ -150,6 +150,7 @@ print("Honeypot tuples:", result["protected_port_count"])
 print("Exception tuples:", result["exception_port_count"])
 print("Active WAN redirects:", result["active_redirect_count"])
 print("Conflicting redirects:", result["conflict_count"])
+print("Skipped in-use honeypot tuples:", result["skipped_in_use"])
 print("Default ban TTL:", result["ban_seconds"], "seconds")
 print("Protected business-port exceptions:")
 for item in result["exception_ports"]:

@@ -25,7 +25,7 @@ from geowan_guard import (
 )
 from geowan_enforce import (
     ensure_enforcement_schema, refresh_enforcement,
-    insert_block_log_samples, enforcement_blocklist
+    insert_block_log_samples, enforcement_blocklist, enforcement_cn_summary
 )
 from geowan_alerts import evaluate_guard_alerts
 
@@ -487,6 +487,10 @@ def monitor_cycle(state, conn):
             "guard_block_samples_inserted", 0
         )
         status["guard_blocklist"] = enforcement_blocklist(conn, now, limit=50)
+        status["cn_honeypot"] = enforcement_cn_summary(conn, now)
+        status["cn_honeypot_bans"] = enforcement_blocklist(
+            conn, now, limit=50, reason="cn_honeypot"
+        )
         publish_status(status)
         return True
     finally:
@@ -569,6 +573,10 @@ def collect():
     status["guard_enforcement"] = enforcement_runtime
     status["guard_block_samples_inserted_last_cycle"] = block_samples
     status["guard_blocklist"] = enforcement_blocklist(conn, now, limit=50)
+    status["cn_honeypot"] = enforcement_cn_summary(conn, now)
+    status["cn_honeypot_bans"] = enforcement_blocklist(
+        conn, now, limit=50, reason="cn_honeypot"
+    )
     resolver.close()
     status["collector"] = {
         "mode": "reconcile",
