@@ -111,7 +111,7 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn("update @geo_guard_ban4", script)
         self.assertIn("update @geo_guard_ban6", script)
         self.assertIn('counter log prefix "GEOWAN_BLOCK4|I|TCP|5001|" level warning drop', script)
-        self.assertIn("ct original proto-dst != { 20443, 3389, 58964 }", script)
+        self.assertIn("ct original proto-dst != { 3389, 20443, 58964 }", script)
         self.assertNotIn("ct status dnat", script)
         self.assertNotIn("@geo_cn4", script)
         self.assertNotIn("@geo_cn6", script)
