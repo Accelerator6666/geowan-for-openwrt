@@ -91,7 +91,6 @@ DEFAULT_SENSITIVE_PORTS = [
     {"port": 5001, "proto": "tcp", "family": "any", "label": "Synology DSM HTTPS"},
     {"port": 5005, "proto": "tcp", "family": "any", "label": "Synology WebDAV"},
     {"port": 5006, "proto": "tcp", "family": "any", "label": "Synology WebDAV HTTPS"},
-    {"port": 5432, "proto": "tcp", "family": "any", "label": "PostgreSQL"},
     {"port": 6379, "proto": "tcp", "family": "any", "label": "Redis"},
     {"port": 6690, "proto": "tcp", "family": "any", "label": "Synology Drive"},
     {"port": 8006, "proto": "tcp", "family": "any", "label": "Proxmox"},
