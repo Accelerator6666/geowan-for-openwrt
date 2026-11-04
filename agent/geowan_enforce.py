@@ -581,7 +581,7 @@ def _chain_rules_match(name, hook, policy, command_runner):
     expected_rules = len(expected) + (
         6 if policy.get("mode") == "enforce" else 0
     )
-    actual_rules = len(re.findall(r"\\bcounter packets\\b", output))
+    actual_rules = len(re.findall(r"\bcounter packets\b", output))
     if actual_rules != expected_rules:
         return False
     if policy.get("mode") == "enforce":
