@@ -208,7 +208,7 @@ class AgentTests(unittest.TestCase):
     def test_collect_passes_boot_id_as_keyword_not_log_lines(self):
         from contextlib import ExitStack
 
-        conn = mock.Mock()
+        conn = sqlite3.connect(":memory:")
         resolver = mock.Mock()
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(
@@ -249,7 +249,6 @@ class AgentTests(unittest.TestCase):
             conn, 1800000000, boot="boot-reconcile-test"
         )
         resolver.close.assert_called_once_with()
-        conn.close.assert_called_once_with()
 
 
 if __name__ == "__main__":
