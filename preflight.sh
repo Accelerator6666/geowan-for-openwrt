@@ -187,7 +187,7 @@ echo
 echo "===== FLOW OFFLOAD STATUS (READ ONLY) ====="
 for option in flow_offloading flow_offloading_hw; do
     value="$(uci -q get "firewall.@defaults[0].$option" 2>/dev/null || echo 0)"
-    printf '%s=%s\\n' "$option" "$value"
+    printf '%s=%s\n' "$option" "$value"
 done
 if nft -a list ruleset 2>/dev/null | grep -Ei 'flowtable|flow add'; then
     echo "WARNING: flow offload rules detected. Existing offloaded sessions may bypass ordinary INPUT/FORWARD filter hooks."
