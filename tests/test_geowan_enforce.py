@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 import geowan_enforce as enforce
@@ -69,12 +70,31 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn((4, "tcp", 5001), protected)
         self.assertIn((6, "tcp", 5001), protected)
         self.assertIn((4, "tcp", 22), protected)
+        self.assertIn((4, "tcp", 3389), protected)
+        self.assertIn((6, "tcp", 3389), protected)
         self.assertNotIn((4, "tcp", 58964), protected)
         self.assertNotIn((4, "tcp", 20443), protected)
         self.assertIn((4, "tcp", 58964), exceptions)
         self.assertIn((4, "udp", 58964), exceptions)
         self.assertIn((4, "tcp", 20443), exceptions)
         self.assertEqual(policy["active_redirect_count"], 5)
+
+
+    def test_conflicting_active_redirect_tuple_is_still_protected(self):
+        conflict = {
+            "family": 4, "proto": "tcp", "public_port": 45678,
+            "dest_ip": "10.0.0.10", "dest_port": 8080,
+            "name": "ambiguous-service", "runtime_active": True,
+            "conflict": True
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(enforce, "build_inventory", return_value=[conflict]):
+                policy = enforce.build_policy(
+                    "", "", Path(tmp) / "missing.json", now=1800000000
+                )
+        self.assertIn((4, "tcp", 45678), policy["protected"])
+        self.assertNotIn((4, "tcp", 45678), policy["exceptions"])
+        self.assertEqual(policy["conflict_count"], 1)
 
     def test_explicit_custom_sensitive_port_supports_non_nat_ipv6(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,7 +131,7 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn("update @geo_guard_ban4", script)
         self.assertIn("update @geo_guard_ban6", script)
         self.assertIn('counter log prefix "GEOWAN_BLOCK4|I|TCP|5001|" level warning drop', script)
-        self.assertIn("ct original proto-dst != { 3389, 20443, 58964 }", script)
+        self.assertIn("ct original proto-dst != { 20443, 58964 }", script)
         self.assertNotIn("ct status dnat", script)
         self.assertNotIn("@geo_cn4", script)
         self.assertNotIn("@geo_cn6", script)
@@ -147,6 +167,7 @@ class EnforcementTests(unittest.TestCase):
         self.assertFalse(any("proto-dst 20443" in line for line in trigger_lines))
         self.assertFalse(any("proto-dst 58964" in line for line in trigger_lines))
         self.assertTrue(any("proto-dst 31080" in line for line in trigger_lines))
+        self.assertTrue(any("proto-dst 3389" in line for line in trigger_lines))
 
     def test_parse_block_log_and_idempotent_database_persistence(self):
         now = 1800000000
