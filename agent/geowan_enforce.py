@@ -158,6 +158,10 @@ def ensure_enforcement_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_guard_block_events_ts
             ON guard_block_events(ts);
+        CREATE TABLE IF NOT EXISTS guard_enforcement_state(
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     """)
     conn.commit()
 
@@ -544,6 +548,48 @@ def _chain_state(name, hook, command_runner):
     return True
 
 
+def _rules_fingerprint(policy, wan_device):
+    payload = {
+        "mode": policy.get("mode", "observe"),
+        "wan_device": wan_device,
+        "protected": [list(item) for item in sorted(policy.get("protected", set()))],
+        "exceptions": [list(item) for item in sorted(policy.get("exceptions", set()))],
+        "ban_seconds": int(policy.get("ban_seconds", BAN_SECONDS_DEFAULT)),
+        "max_bans": int(policy.get("max_bans", 65536)),
+        "log_rate_per_second": int(policy.get("log_rate_per_second", 2)),
+        "log_burst": int(policy.get("log_burst", 10)),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _chain_rules_match(name, hook, policy, command_runner):
+    try:
+        output = command_runner("nft", "list", "chain", "inet", "fw4", name)
+    except subprocess.CalledProcessError:
+        return False
+    path_code = "I" if hook == "input" else "F"
+    marker_type = "GEOWAN_BLOCK" if policy.get("mode") == "enforce" else "GEOWAN_SENS"
+    expected = [
+        "%s%d|%s|%s|%d|" % (
+            marker_type, family, path_code, proto.upper(), port
+        )
+        for family, proto, port in sorted(policy.get("protected", set()))
+    ]
+    if any(output.count(marker) != 1 for marker in expected):
+        return False
+    expected_rules = len(expected) + (
+        6 if policy.get("mode") == "enforce" else 0
+    )
+    actual_rules = len(re.findall(r"\\bcounter packets\\b", output))
+    if actual_rules != expected_rules:
+        return False
+    if policy.get("mode") == "enforce":
+        if "@%s" % BAN4_SET not in output or "@%s" % BAN6_SET not in output:
+            return False
+    return True
+
+
 def _set_state(name, family, command_runner):
     try:
         output = command_runner("nft", "list", "set", "inet", "fw4", name)
@@ -720,6 +766,9 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
             for name, hook in ((INPUT_CHAIN, "input"), (FORWARD_CHAIN, "forward")):
                 if _chain_state(name, hook, runner):
                     runner("nft", "delete", "chain", "inet", "fw4", name)
+            conn.execute(
+                "DELETE FROM guard_enforcement_state WHERE key='rules_fingerprint'"
+            )
             conn.execute("DELETE FROM guard_bans WHERE expires_at<=?", (now,))
             conn.commit()
             return {
@@ -759,10 +808,27 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
 
         input_exists = _chain_state(INPUT_CHAIN, "input", runner)
         forward_exists = _chain_state(FORWARD_CHAIN, "forward", runner)
-        script = render_enforcement_script(
-            policy, wan, input_exists, forward_exists, sets_exist
+        fingerprint = _rules_fingerprint(policy, wan)
+        stored = conn.execute(
+            "SELECT value FROM guard_enforcement_state WHERE key='rules_fingerprint'"
+        ).fetchone()
+        rules_current = (
+            input_exists and forward_exists and stored
+            and stored[0] == fingerprint
+            and _chain_rules_match(INPUT_CHAIN, "input", policy, runner)
+            and _chain_rules_match(FORWARD_CHAIN, "forward", policy, runner)
         )
-        runner("nft", "-f", "-", input_text=script)
+        rules_refreshed = not bool(rules_current)
+        if rules_refreshed:
+            script = render_enforcement_script(
+                policy, wan, input_exists, forward_exists, sets_exist
+            )
+            runner("nft", "-f", "-", input_text=script)
+            conn.execute(
+                "INSERT OR REPLACE INTO guard_enforcement_state(key,value) "
+                "VALUES('rules_fingerprint',?)",
+                (fingerprint,)
+            )
 
         if policy["mode"] == "enforce":
             for family, name in ((4, BAN4_SET), (6, BAN6_SET)):
@@ -789,6 +855,8 @@ def refresh_enforcement(conn, now=None, config_path=None, command_runner=None):
             "kernel_bans_v6": set_counts[6],
             "restored_v4": restored[4],
             "restored_v6": restored[6],
+            "rules_refreshed": rules_refreshed,
+            "rules_fingerprint": fingerprint,
             "last_error": "",
         }
     except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
