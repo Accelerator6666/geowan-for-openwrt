@@ -585,8 +585,19 @@ def _chain_rules_match(name, hook, policy, command_runner):
     if actual_rules != expected_rules:
         return False
     if policy.get("mode") == "enforce":
+        if len(re.findall(r"\bdrop\b", output)) != expected_rules:
+            return False
+        for marker in expected:
+            rule = next(line for line in output.splitlines() if marker in line)
+            if "drop" not in rule:
+                return False
         if "@%s" % BAN4_SET not in output or "@%s" % BAN6_SET not in output:
             return False
+    else:
+        for marker in expected:
+            rule = next(line for line in output.splitlines() if marker in line)
+            if "log prefix" not in rule or "drop" in rule or "reject" in rule:
+                return False
     return True
 
 
