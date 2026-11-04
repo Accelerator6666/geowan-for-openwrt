@@ -103,8 +103,6 @@ DEFAULT_EXCEPTION_PORTS = [
     {"port": 20443, "proto": "udp", "family": "any", "label": "SSLVPN"},
     {"port": 58964, "proto": "tcp", "family": "any", "label": "RDP public"},
     {"port": 58964, "proto": "udp", "family": "any", "label": "RDP public"},
-    {"port": 3389, "proto": "tcp", "family": "any", "label": "RDP direct"},
-    {"port": 3389, "proto": "udp", "family": "any", "label": "RDP direct"},
 ]
 DEFAULT_POLICY = {
     "enabled": True,
@@ -334,15 +332,17 @@ def build_policy(uci_text, nft_text, config_path=None, now=None):
     active = [row for row in inventory if row.get("runtime_active")]
     conflicts = [row for row in active if row.get("conflict")]
     for row in active:
-        if row.get("conflict"):
-            continue
         family = int(row["family"])
         proto = str(row["proto"]).lower()
         port = int(row["public_port"])
         key = (family, proto, port)
+        # The public tuple is still unambiguous when its backend mapping conflicts.
+        # Protect it; skip only backend-dependent automatic exception detection.
         if policy["protect_all_active_redirects"]:
             protected.add(key)
             protected_labels.setdefault(key, str(row.get("name") or "WAN redirect"))
+        if row.get("conflict"):
+            continue
         name = str(row.get("name") or "")
         if policy["auto_detect_rdp"] and _is_rdp_service(row):
             exceptions.add(key)
